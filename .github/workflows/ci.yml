@@ -26,13 +26,34 @@ jobs:
         env:
           DATABASE_URL: postgresql://unused:unused@localhost:5432/unused
 
-      # TEMPORARY --allow-no-models: the schema has no models until Sprint 1,
-      # which removes the flag here and in backend/package.json.
-      - run: npx prisma generate --allow-no-models
+      - run: npx prisma generate
         working-directory: backend
 
-      # The boot test calls /health and needs both servers up: it fails
-      # rather than skips without them.
+      # Copied from eparking .github/workflows/ci.yml. Two things at once: the
+      # migrations apply cleanly to an empty database through the same command
+      # a deploy uses, and the database they produce still matches
+      # schema.prisma. A schema edit without a migration makes the diff exit 2,
+      # which is what keeps docs/schema.md and the database honest.
+      #
+      # No shadow database: the diff reads the live database the migrations
+      # were just applied to. The raw-SQL rules (CHECKs, the partial unique
+      # index, the audit trigger) do not register as drift.
+      - name: Migrations apply and match the schema
+        working-directory: backend
+        run: |
+          npx prisma migrate deploy
+          npx prisma migrate diff \
+            --from-schema-datasource prisma/schema.prisma \
+            --to-schema-datamodel prisma/schema.prisma \
+            --exit-code && echo "schema and migrations agree"
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+
+      # The database tests need the migrated database above, and both servers
+      # up: they fail rather than skip without them. The HTTP tests commit
+      # rows, which is fine on this throwaway container (CI=true lets them run
+      # on a database not named *_test). Each test file sets its own
+      # JWT_SECRET and SITE_CODE.
       - run: npm test
         working-directory: backend
         env:

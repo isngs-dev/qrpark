@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { AddressInfo } from 'node:net';
+import { randomBytes } from 'node:crypto';
 
 /**
  * The unhappy path: Postgres unreachable. /health must still answer 200 with
@@ -14,6 +15,9 @@ test('/health reports degraded and database down when Postgres is unreachable', 
   assert.ok(process.env.REDIS_URL, 'REDIS_URL must be set');
   // Port 1 on loopback: nothing listens there, so the connection is refused.
   process.env.DATABASE_URL = 'postgresql://nobody:nobody@127.0.0.1:1/nothing';
+
+  // The app refuses to start without a signing secret; any value will do here.
+  process.env.JWT_SECRET ??= randomBytes(32).toString('hex');
 
   const { NestFactory } = await import('@nestjs/core');
   const { AppModule } = await import('./app.module');

@@ -1,11 +1,18 @@
-// QR Parking database schema.
+// QR Parking database schema. docs/schema.md is the full write-up; update it
+// in the same commit as any migration.
 //
-// Models arrive in Sprint 1, together with docs/schema.md. Until then this file
-// only wires Prisma to Postgres.
+// Rules that shaped this file:
+//   * Every table carries site_id.
+//   * All money is integer kobo. Never Float, never Decimal naira.
+//   * The QR token is opaque random text, never an id, never sequential, and
+//     is stored nowhere but ticket.token.
+//   * Timestamps are set by the backend, UTC, TIMESTAMPTZ.
+//   * Columns are snake_case in the database, camelCase here (@map).
 //
-// TEMPORARY: with no models, `prisma generate` refuses to run, so the backend
-// `build` and `prisma:generate` scripts and CI pass --allow-no-models.
-// Sprint 1 removes the flag in all three places once the first models exist.
+// Prisma schema syntax cannot express the CHECK constraints, the partial
+// unique index (one PENDING payment per operator) or the two triggers
+// (ticket only for a SUCCESS payment; audit_log append-only).
+// They are raw SQL at the end of migrations/0001_init/migration.sql.
 
 generator client {
   provider = "prisma-client-js"
@@ -14,4 +21,361 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  ADMIN
+  ENTRY_OPERATOR
+  EXIT_OPERATOR
+
+  @@map("user_role")
+}
+
+enum GateDirection {
+  ENTRY
+  EXIT
+
+  @@map("gate_direction")
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS // set only when Paystack confirms (webhook or verify)
+  FAILED
+  ABANDONED
+
+  @@map("payment_status")
+}
+
+// EXPIRED is not stored: it is derived (status ACTIVE and now > valid_until).
+enum TicketStatus {
+  ACTIVE
+  USED
+
+  @@map("ticket_status")
+}
+
+enum ScanKind {
+  CHECK // read-only, either operator role
+  EXIT // the single-use validation
+
+  @@map("scan_kind")
+}
+
+// ACTIVE only for CHECK, VALID only for EXIT (CHECK constraint in 0001_init).
+// PAYMENT_NOT_COMPLETED is left out until the terminal flow needs it.
+enum ScanResult {
+  VALID
+  ACTIVE
+  ALREADY_USED
+  EXPIRED
+  INVALID_QR
+  NOT_FOUND
+
+  @@map("scan_result")
+}
+
+enum AuditAction {
+  CATEGORY_CREATED
+  CATEGORY_UPDATED // name or active flag
+  CATEGORY_PRICE_CHANGED
+  SETTINGS_CHANGED
+  GATE_CREATED
+  GATE_UPDATED
+  USER_CREATED
+  USER_UPDATED // name, role, gate or active flag
+  USER_PASSWORD_RESET
+  TICKET_REPRINTED
+
+  @@map("audit_action")
+}
+
+// ---------------------------------------------------------------------------
+// Site and its settings
+// ---------------------------------------------------------------------------
+
+model Site {
+  id        String   @id @default(uuid()) @db.Uuid
+  code      String   @unique // matches SITE_CODE in the environment
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  setting    SiteSetting?
+  users      AppUser[]
+  gates      Gate[]
+  categories VehicleCategory[]
+  payments   Payment[]
+  tickets    Ticket[]
+  scanEvents ScanEvent[]
+  auditLogs  AuditLog[]
+
+  @@map("site")
+}
+
+// One row per site: site_id is the primary key.
+model SiteSetting {
+  siteId String @id @map("site_id") @db.Uuid
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Restrict)
+
+  displayName String @map("display_name")
+
+  // Stored on each ticket at issue time; changing it never changes a ticket
+  // already issued. 1-72.
+  validityHours Int @map("validity_hours")
+
+  receiptOrgName     String? @map("receipt_org_name")
+  receiptContactLine String? @map("receipt_contact_line")
+
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("site_setting")
+}
+
+// ---------------------------------------------------------------------------
+// Gates and users
+// ---------------------------------------------------------------------------
+
+model Gate {
+  id     String @id @default(uuid()) @db.Uuid
+  siteId String @map("site_id") @db.Uuid
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Restrict)
+
+  code      String // stable key, e.g. "ENTRY_1"; never changes
+  name      String
+  direction GateDirection // never changes: operators are assigned by it
+  isActive  Boolean       @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  users        AppUser[]
+  payments     Payment[]
+  entryTickets Ticket[]    @relation("TicketEntryGate")
+  exitTickets  Ticket[]    @relation("TicketUsedGate")
+  scanEvents   ScanEvent[]
+
+  @@unique([siteId, code])
+  @@map("gate")
+}
+
+model AppUser {
+  id     String @id @default(uuid()) @db.Uuid
+  siteId String @map("site_id") @db.Uuid
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Restrict)
+
+  username     String // lower-case, 3-32 of a-z 0-9 . _ -
+  name         String
+  passwordHash String   @map("password_hash") // Argon2id. Never returned, never logged.
+  role         UserRole
+
+  // Null for ADMIN, required for an operator (CHECK in 0001_init). An entry
+  // operator's gate faces ENTRY, an exit operator's EXIT (enforced in code).
+  gateId String? @map("gate_id") @db.Uuid
+  gate   Gate?   @relation(fields: [gateId], references: [id], onDelete: Restrict)
+
+  // Raised by logout, deactivation, a role or gate change, and a password
+  // reset. A token carrying an older value is refused on the next request.
+  tokenVersion Int @default(0) @map("token_version")
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  payments   Payment[]
+  issued     Ticket[]    @relation("TicketOperator")
+  validated  Ticket[]    @relation("TicketUsedBy")
+  scanEvents ScanEvent[]
+  auditLogs  AuditLog[]
+
+  @@unique([siteId, username])
+  @@map("app_user")
+}
+
+// ---------------------------------------------------------------------------
+// Vehicle categories: a flat price each
+// ---------------------------------------------------------------------------
+
+// Deactivate rather than delete: payments and tickets keep their snapshot,
+// and the category row must stay explicable.
+model VehicleCategory {
+  id     String @id @default(uuid()) @db.Uuid
+  siteId String @map("site_id") @db.Uuid
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Restrict)
+
+  code      String // what the app sends, e.g. "CAR"; never changes
+  name      String // what staff see
+  priceKobo Int     @map("price_kobo") // integer kobo, > 0 (CHECK in 0001_init)
+  isActive  Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  payments Payment[]
+
+  @@unique([siteId, code])
+  @@map("vehicle_category")
+}
+
+// ---------------------------------------------------------------------------
+// Payment and ticket (used from Sprint 2)
+// ---------------------------------------------------------------------------
+
+model Payment {
+  id     String @id @default(uuid()) @db.Uuid
+  siteId String @map("site_id") @db.Uuid
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Restrict)
+
+  // Our own reference, also used as Paystack's. The webhook idempotency key.
+  reference String @unique
+
+  // From the app, one per entry attempt. A repeated tap returns this payment.
+  idempotencyKey String @unique @map("idempotency_key")
+
+  operatorId String          @map("operator_id") @db.Uuid
+  operator   AppUser         @relation(fields: [operatorId], references: [id], onDelete: Restrict)
+  gateId     String          @map("gate_id") @db.Uuid
+  gate       Gate            @relation(fields: [gateId], references: [id], onDelete: Restrict)
+  categoryId String          @map("category_id") @db.Uuid
+  category   VehicleCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  // Snapshot of the category when the payment started. A price change never
+  // reaches a payment already started.
+  categoryCode String @map("category_code")
+  categoryName String @map("category_name")
+  amountKobo   Int    @map("amount_kobo")
+
+  customerName String? @map("customer_name")
+
+  status PaymentStatus @default(PENDING)
+
+  authorizationUrl String? @map("authorization_url")
+  accessCode       String? @map("access_code")
+
+  // The last verified Paystack payload.
+  paystackEvent Json? @map("paystack_event")
+
+  // Backend time when SUCCESS was recorded. Set if and only if SUCCESS.
+  // valid_until counts from this.
+  paidAt DateTime? @map("paid_at") @db.Timestamptz(6)
+
+  // Paystack's own paid time, copied from its payload (Sprint 2). For
+  // reconciliation only: NEVER used for validity.
+  paystackPaidAt DateTime? @map("paystack_paid_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  ticket Ticket?
+
+  @@index([siteId, status])
+  @@map("payment")
+}
+
+model Ticket {
+  id     String @id @default(uuid()) @db.Uuid
+  siteId String @map("site_id") @db.Uuid
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Restrict)
+
+  // One ticket per payment, and only for a SUCCESS payment: the trigger
+  // ticket_requires_success_payment (raw SQL in 0001_init) refuses an INSERT
+  // unless the payment is SUCCESS, reading it FOR SHARE. The payment's status
+  // may still change later (Phase 2 refunds) without touching the ticket.
+  paymentId String  @unique @map("payment_id") @db.Uuid
+  payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  // The QR. 32 random bytes as base64url (43 characters). Stored nowhere else.
+  token        String @unique
+  ticketNumber String @map("ticket_number") // XXXX-XXXX; not a credential
+
+  operatorId String  @map("operator_id") @db.Uuid
+  operator   AppUser @relation("TicketOperator", fields: [operatorId], references: [id], onDelete: Restrict)
+  gateId     String  @map("gate_id") @db.Uuid
+  gate       Gate    @relation("TicketEntryGate", fields: [gateId], references: [id], onDelete: Restrict)
+
+  categoryName     String  @map("category_name")
+  amountKobo       Int     @map("amount_kobo")
+  customerName     String? @map("customer_name")
+  paymentReference String  @map("payment_reference")
+
+  paidAt        DateTime @map("paid_at") @db.Timestamptz(6)
+  issuedAt      DateTime @default(now()) @map("issued_at") @db.Timestamptz(6)
+  validityHours Int      @map("validity_hours")
+  validUntil    DateTime @map("valid_until") @db.Timestamptz(6)
+
+  status TicketStatus @default(ACTIVE)
+
+  usedAt     DateTime? @map("used_at") @db.Timestamptz(6)
+  usedGateId String?   @map("used_gate_id") @db.Uuid
+  usedGate   Gate?     @relation("TicketUsedGate", fields: [usedGateId], references: [id], onDelete: Restrict)
+  usedById   String?   @map("used_by_id") @db.Uuid
+  usedBy     AppUser?  @relation("TicketUsedBy", fields: [usedById], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  scanEvents ScanEvent[]
+
+  @@unique([siteId, ticketNumber])
+  @@index([siteId, status, validUntil])
+  @@map("ticket")
+}
+
+// ---------------------------------------------------------------------------
+// Scans and audit
+// ---------------------------------------------------------------------------
+
+// Every check and every exit scan. Never stores the scanned text: a code that
+// matched no ticket leaves no trace of itself here.
+model ScanEvent {
+  id     String @id @default(uuid()) @db.Uuid
+  siteId String @map("site_id") @db.Uuid
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Restrict)
+
+  ticketId String? @map("ticket_id") @db.Uuid
+  ticket   Ticket? @relation(fields: [ticketId], references: [id], onDelete: Restrict)
+
+  kind   ScanKind
+  result ScanResult
+
+  gateId     String  @map("gate_id") @db.Uuid
+  gate       Gate    @relation(fields: [gateId], references: [id], onDelete: Restrict)
+  operatorId String  @map("operator_id") @db.Uuid
+  operator   AppUser @relation(fields: [operatorId], references: [id], onDelete: Restrict)
+
+  // The app's installation id. Recorded only, never trusted.
+  deviceRef String @map("device_ref")
+
+  occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+
+  @@index([siteId, occurredAt])
+  @@index([ticketId])
+  @@map("scan_event")
+}
+
+// Who did what, when, to which record. Append-only: a trigger in 0001_init
+// raises on UPDATE and DELETE.
+model AuditLog {
+  id     String @id @default(uuid()) @db.Uuid
+  siteId String @map("site_id") @db.Uuid
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Restrict)
+
+  actorId String  @map("actor_id") @db.Uuid
+  actor   AppUser @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  action     AuditAction
+  targetType String      @map("target_type")
+  targetId   String      @map("target_id")
+
+  // Before and after values. Never a password, a hash or a token.
+  detail Json?
+
+  occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+
+  @@index([siteId, occurredAt])
+  @@index([siteId, targetType, targetId])
+  @@map("audit_log")
 }

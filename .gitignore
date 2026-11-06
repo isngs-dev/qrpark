@@ -35,3 +35,6 @@ local.properties
 # OS
 Thumbs.db
 .DS_Store
+
+# Raw evidence for the review room. Kept locally, never committed.
+.evidence/

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { AddressInfo } from 'node:net';
+import { randomBytes } from 'node:crypto';
 
 /**
  * Boots the real application, as main.ts does, and calls /health over HTTP.
@@ -12,6 +13,9 @@ import type { AddressInfo } from 'node:net';
 test('the application boots and /health reports database and Redis up', async () => {
   assert.ok(process.env.DATABASE_URL, 'DATABASE_URL must be set');
   assert.ok(process.env.REDIS_URL, 'REDIS_URL must be set');
+
+  // The app refuses to start without a signing secret; any value will do here.
+  process.env.JWT_SECRET ??= randomBytes(32).toString('hex');
 
   const { NestFactory } = await import('@nestjs/core');
   const { AppModule } = await import('./app.module');
