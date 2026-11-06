@@ -137,6 +137,23 @@ test('settings: read, then validity hours 1-72 only', async () => {
   }
 });
 
+test('settings: payment window 1-30 minutes, editable and audited; Paystack mode is read-only', async () => {
+  const read = await get('/admin/settings');
+  assert.equal(read.body.paymentWindowMinutes, 5);
+  assert.equal(read.body.paystackMode, 'test');
+  for (const paymentWindowMinutes of [0, 31, 2.5, '5', null]) {
+    const res = await patch('/admin/settings', { paymentWindowMinutes });
+    assert.equal(res.status, 400, `paymentWindowMinutes ${String(paymentWindowMinutes)} answered ${res.status}`);
+  }
+  const res = await patch('/admin/settings', { paymentWindowMinutes: 10 });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.paymentWindowMinutes, 10);
+  const audit = await lastAudit(t.siteId);
+  assert.deepEqual(audit?.detail, { paymentWindowMinutes: { from: 5, to: 10 } });
+  assert.equal((await patch('/admin/settings', { paystackMode: 'live' })).status, 400, 'paystackMode was writable');
+  await patch('/admin/settings', { paymentWindowMinutes: 5 });
+});
+
 test('settings: a change is audited with before and after, only for what changed', async () => {
   const res = await patch('/admin/settings', { displayName: '  Garki Test Market ', receiptContactLine: 'Call 0800' });
   assert.equal(res.status, 200);

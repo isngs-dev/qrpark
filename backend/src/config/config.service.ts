@@ -3,8 +3,10 @@ import { Prisma, type GateDirection } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 import { SiteService } from '../site.service';
 import { AuditService, changes } from '../audit/audit.service';
+import { paystackMode } from '../paystack/verdicts';
 import {
   assertCode,
+  assertPaymentWindow,
   assertPriceKobo,
   assertValidityHours,
   cleanDisplayName,
@@ -23,7 +25,17 @@ import {
 
 const CATEGORY = { id: true, code: true, name: true, priceKobo: true, isActive: true, createdAt: true, updatedAt: true } as const;
 const GATE = { id: true, code: true, name: true, direction: true, isActive: true, createdAt: true, updatedAt: true } as const;
-const SETTINGS = { displayName: true, validityHours: true, receiptOrgName: true, receiptContactLine: true, updatedAt: true } as const;
+const SETTINGS = {
+  displayName: true,
+  validityHours: true,
+  paymentWindowMinutes: true,
+  receiptOrgName: true,
+  receiptContactLine: true,
+  updatedAt: true,
+} as const;
+
+/** Read-only in the portal: from the environment, never stored. */
+const withMode = <T extends object>(settings: T) => ({ ...settings, paystackMode: paystackMode(process.env.PAYSTACK_SECRET_KEY) });
 
 /** A unique-key clash becomes 409 with a plain message. */
 function conflictOn(error: unknown, message: string): never {
@@ -142,7 +154,7 @@ export class ConfigService {
     const siteId = await this.site.getId();
     const settings = await this.prisma.siteSetting.findUnique({ where: { siteId }, select: SETTINGS });
     if (!settings) throw new NotFoundException('This site has no settings row. Run: npm run seed:site');
-    return settings;
+    return withMode(settings);
   }
 
   /**
@@ -154,6 +166,7 @@ export class ConfigService {
     input: {
       displayName?: string;
       validityHours?: number;
+      paymentWindowMinutes?: number;
       receiptOrgName?: string | null;
       receiptContactLine?: string | null;
     },
@@ -163,6 +176,7 @@ export class ConfigService {
     const data: {
       displayName?: string;
       validityHours?: number;
+      paymentWindowMinutes?: number;
       receiptOrgName?: string | null;
       receiptContactLine?: string | null;
     } = {};
@@ -170,6 +184,10 @@ export class ConfigService {
     if (input.validityHours !== undefined) {
       assertValidityHours(input.validityHours);
       data.validityHours = input.validityHours;
+    }
+    if (input.paymentWindowMinutes !== undefined) {
+      assertPaymentWindow(input.paymentWindowMinutes);
+      data.paymentWindowMinutes = input.paymentWindowMinutes;
     }
     if (input.receiptOrgName !== undefined) data.receiptOrgName = cleanReceiptLine(input.receiptOrgName, 'receiptOrgName');
     if (input.receiptContactLine !== undefined) {
@@ -193,7 +211,7 @@ export class ConfigService {
           detail: changed,
         });
       }
-      return after;
+      return withMode(after);
     });
   }
 

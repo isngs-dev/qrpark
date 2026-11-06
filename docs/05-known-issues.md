@@ -10,3 +10,4 @@ The tracker. One row per issue. IDs: H (high), M (medium), L (low), T
 | T1 | Open | Sprint 1 | Default ticket validity is 12 hours, an assumption for testing. `seed-site` sets 12 on every new site. | Confirm the validity default before go-live (editable in the Admin Portal, 1–72). |
 | T2 | Open | Sprint 1 | Receipt branding (logos, organisation name, contact line) is an open question. `site_setting` has organisation name and contact line only; no logo column. | Add a logo choice when branding is answered. |
 | L2 | Open | Sprint 1 | `audit_log` TRUNCATE is not blocked by the append-only trigger (it guards UPDATE and DELETE only). | At deploy, the app's database user must not hold the TRUNCATE privilege. Sprint 6. |
+| L3 | Open | Sprint 2 | BullMQ (the verify and sweep jobs) needs Redis to run with `maxmemory-policy noeviction`; any evicting policy can silently drop queued jobs. | Set at deploy. Sprint 6. |

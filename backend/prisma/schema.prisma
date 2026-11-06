@@ -126,6 +126,10 @@ model SiteSetting {
   // already issued. 1-72.
   validityHours Int @map("validity_hours")
 
+  // How long a PENDING payment blocks its operator before it is ABANDONED
+  // (unless Paystack confirms it first). 1-30 minutes.
+  paymentWindowMinutes Int @default(5) @map("payment_window_minutes")
+
   receiptOrgName     String? @map("receipt_org_name")
   receiptContactLine String? @map("receipt_contact_line")
 

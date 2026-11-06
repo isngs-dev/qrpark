@@ -4,7 +4,7 @@
 in the same commit as any endpoint change. If it and the code disagree, say
 which is wrong.
 
-Created: Sprint 1. The access column is enforced by the global guard and
+Created: Sprint 1. Last change: Sprint 2 (payments, webhook, tickets). The access column is enforced by the global guard and
 pinned by `backend/src/auth/routes.lifecycle.test.ts`, which fails if a route
 is added without being listed there.
 
@@ -61,8 +61,17 @@ is added without being listed there.
 | `POST /admin/users` | | yes | | |
 | `PATCH /admin/users/:id` | | yes | | |
 | `POST /admin/users/:id/password` | | yes | | |
+| `GET /categories` | | | yes | |
+| `POST /payments` | | | yes | |
+| `GET /payments/:id` | | | yes (own) | |
+| `POST /paystack/webhook` | signed | | | |
+| `GET /tickets/recent` | | | yes (own) | |
+| `POST /tickets/reprint` | | | yes | |
 
 A route with no `@Roles()` is refused for every role (the guard fails closed).
+
+**signed**: no token; the Paystack signature authenticates it. Without a valid
+signature it is 401, whatever token is sent.
 
 ---
 
@@ -166,9 +175,12 @@ Any of:
 A settings view:
 
 ```json
-{ "displayName": "Garki International Market (TEST)", "validityHours": 12,
-  "receiptOrgName": null, "receiptContactLine": null, "updatedAt": "..." }
+{ "displayName": "Garki International Market (TEST)", "validityHours": 12, "paymentWindowMinutes": 5,
+  "receiptOrgName": null, "receiptContactLine": null, "updatedAt": "...", "paystackMode": "test" }
 ```
+
+`paystackMode` is read-only (`"test"` or `"not configured"`), from the
+environment. The backend refuses to start with a live key.
 
 ### `GET /admin/settings` → 200
 
@@ -177,11 +189,13 @@ A settings view:
 Any of:
 
 ```json
-{ "displayName": "...", "validityHours": 12, "receiptOrgName": "...", "receiptContactLine": "..." }
+{ "displayName": "...", "validityHours": 12, "paymentWindowMinutes": 5, "receiptOrgName": "...", "receiptContactLine": "..." }
 ```
 
 - `displayName`: trimmed, 1–100 characters.
 - `validityHours`: integer 1–72. Applies to tickets issued after the change only.
+- `paymentWindowMinutes`: integer 1–30. How long a PENDING payment blocks its operator.
+- `paystackMode` is not accepted (400).
 - `receiptOrgName`, `receiptContactLine`: up to 120 characters; `null` or `""` clears.
 - Audited: `SETTINGS_CHANGED` with `{ field: { from, to } }` for each field that changed.
 
@@ -264,3 +278,153 @@ Any of:
 
 Returns `{ "id": "uuid", "passwordSet": true }`. Ends the user's sessions.
 Audited: `USER_PASSWORD_RESET` `{ username }` (never the password).
+
+---
+
+## Payments (entry operators)
+
+### `GET /categories` → 200
+
+Active categories with the backend's price. The app shows this price; it
+never computes or edits one.
+
+```json
+[{ "code": "CAR", "name": "Car", "priceKobo": 50000 }]
+```
+
+### `POST /payments` → 201 (new) or 200 (repeat of the same key)
+
+```json
+{ "categoryCode": "CAR", "customerName": "Ada Obi", "idempotencyKey": "3f1c2a90-6b1e-4c5d-9a7e-0b2c4d6e8f10" }
+```
+
+- `categoryCode`: case-insensitive. Unknown 404; retired 400. **No price field**
+  is accepted (400): the backend copies the category's price onto the payment.
+- `customerName`: optional, trimmed, up to 100; blank is none.
+- `idempotencyKey`: 16–100 of `A-Z a-z 0-9 _ -`, one per entry attempt (a UUID).
+  The same key from the same operator with the same request returns the same
+  payment (200). The same key from **another operator**, or with a different
+  category or name, is 409 and returns nothing of that payment.
+- The operator's gate must be in service and face ENTRY (400 otherwise).
+- **One payment in progress per operator.** While one is PENDING, a new one is
+  409 with `{ "pendingPaymentId": "uuid" }`. A PENDING payment older than the
+  payment window is first checked with Paystack: if paid it settles (and gets
+  its ticket); if not, it is ABANDONED and the new one starts.
+- Redis unreachable: 503, nothing written (the payment lock fails closed).
+- Paystack not configured: 503, nothing written.
+
+Response (the payment view):
+
+```json
+{ "id": "uuid", "reference": "QRP_0123456789abcdef01234567", "status": "PENDING",
+  "categoryCode": "CAR", "categoryName": "Car", "amountKobo": 50000, "customerName": "Ada Obi",
+  "createdAt": "...", "paidAt": null,
+  "authorizationUrl": "https://checkout.paystack.com/...", "accessCode": "...", "ticket": null }
+```
+
+`authorizationUrl` and `accessCode` are the Paystack checkout, present only
+while PENDING. The app opens it and then **waits**: closing the checkout is
+never success.
+
+When Paystack answers badly:
+
+| Paystack | Response | Payment |
+|---|---|---|
+| refuses (a clear "no") | 502 `{ message, paymentId }` | ABANDONED; the operator can start again |
+| does not answer (timeout, 5xx, unreadable) | 503 `{ message, outcome: "unknown", paymentId }` | stays PENDING (Paystack may have it); checked within ~3 s; blocks a second charge |
+
+### `GET /payments/:id` → 200
+
+The operator's **own** payment only; any other id is 404. Poll this until
+`status` is not PENDING. Once SUCCESS, `ticket` is the full ticket view
+(below), **including the QR token**, for printing.
+
+### How a payment ends
+
+A payment leaves PENDING only on Paystack's word:
+
+- **SUCCESS**: a signed `charge.success` webhook, or Paystack's verify
+  saying success. Paystack's amount must equal ours (kobo) in NGN, or nothing
+  happens. The ticket is created in the same transaction.
+- **FAILED**: a signed `charge.failed`, or verify saying failed.
+- **ABANDONED**: Paystack refused to start it; or Paystack has no such
+  transaction and never gave us a checkout; or, past the payment window,
+  Paystack says it is not paid.
+- A background check runs ~20 s after the start (in case no webhook comes),
+  and a sweep every 2 minutes checks every PENDING payment older than 20 s.
+  No answer from Paystack changes nothing.
+- **A late SUCCESS is accepted.** If Paystack confirms a payment already
+  ABANDONED or FAILED, it becomes SUCCESS, the ticket is issued (it appears in
+  the operator's recent list) and a `LATE_SUCCESS` warning is logged.
+
+> **Known double-charge case.** A late SUCCESS on an abandoned checkout, plus
+> a second payment the operator started for the same customer meanwhile, means
+> the customer paid twice and holds two tickets. Resolve it by **refunding one
+> payment in the Paystack dashboard** (this app does not issue refunds); the
+> `LATE_SUCCESS` log line names the reference.
+
+---
+
+## Paystack webhook
+
+### `POST /paystack/webhook` (signed) → 200
+
+Paystack's own call. The `x-paystack-signature` header must be the
+HMAC-SHA512 of the exact request bytes with the secret key.
+
+- Bad or missing signature: **401**, nothing changes.
+- Valid signature, unknown reference: **200**, nothing changes.
+- Valid `charge.success`: settles (idempotent: a repeat, even at the same
+  moment, makes no second ticket). Valid `charge.failed`: PENDING → FAILED.
+  Any other event: 200, nothing changes.
+
+Response: `{ "received": true }`.
+
+---
+
+## Tickets (entry operators)
+
+The ticket view (from `GET /payments/:id` and `POST /tickets/reprint` only):
+
+```json
+{ "id": "uuid", "ticketNumber": "K7MP-3QZ9", "token": "<43 characters: the QR content>",
+  "state": "ACTIVE", "categoryName": "Car", "amountKobo": 50000, "customerName": "Ada Obi",
+  "paymentReference": "QRP_...", "paidAt": "...", "validUntil": "...", "issuedAt": "...",
+  "gate": { "code": "ENTRY_1", "name": "..." }, "operator": { "name": "..." },
+  "header": { "displayName": "...", "receiptOrgName": null, "receiptContactLine": null } }
+```
+
+- `token` is the only thing in the QR. It is never logged and never in an audit row.
+- `state` is `ACTIVE`, `USED` or `EXPIRED` (ACTIVE and past `validUntil`).
+- `validUntil` = `paidAt` + the site's validity hours **at issue time**.
+
+### `GET /tickets/recent` → 200
+
+The caller's own tickets issued in the last 24 hours, newest first, at most
+50. **Without the token**: print through `GET /payments/:paymentId` (first
+print) or reprint.
+
+```json
+[{ "id": "uuid", "paymentId": "uuid", "ticketNumber": "K7MP-3QZ9", "state": "ACTIVE",
+   "categoryName": "Car", "amountKobo": 50000, "customerName": null,
+   "paidAt": "...", "validUntil": "...", "issuedAt": "..." }]
+```
+
+### `POST /tickets/reprint` → 200
+
+```json
+{ "ticketId": "uuid" }
+```
+
+or
+
+```json
+{ "ticketNumber": "k7mp3qz9" }
+```
+
+- Exactly one of the two (400 otherwise). The number is case-insensitive, hyphen optional.
+- **Any entry operator of the site** may reprint; the same QR is returned (the ticket view).
+- **ACTIVE tickets only.** Used, expired, unknown and malformed all get the
+  same 404 `No active ticket found`, and nothing is audited.
+- Audited: `TICKET_REPRINTED` by the reprinting operator, detail
+  `{ ticketNumber, via: "id" | "number", issuedBy: { id, username } }`.

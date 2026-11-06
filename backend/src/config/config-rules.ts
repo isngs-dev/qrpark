@@ -15,6 +15,9 @@ import { BadRequestException } from '@nestjs/common';
 /** INTEGER's ceiling. A larger value cannot be stored. */
 export const MAX_KOBO = 2_147_483_647;
 
+export const MIN_PAYMENT_WINDOW_MINUTES = 1;
+export const MAX_PAYMENT_WINDOW_MINUTES = 30;
+
 export const MIN_VALIDITY_HOURS = 1;
 export const MAX_VALIDITY_HOURS = 72;
 
@@ -50,6 +53,18 @@ export function assertValidityHours(value: number): void {
   }
   if (value < MIN_VALIDITY_HOURS || value > MAX_VALIDITY_HOURS) {
     throw new BadRequestException(`validityHours must be between ${MIN_VALIDITY_HOURS} and ${MAX_VALIDITY_HOURS}`);
+  }
+}
+
+/** How long a PENDING payment blocks its operator: whole minutes, 1-30. */
+export function assertPaymentWindow(value: number): void {
+  if (typeof value !== 'number' || !Number.isInteger(value)) {
+    throw new BadRequestException('paymentWindowMinutes must be a whole number of minutes');
+  }
+  if (value < MIN_PAYMENT_WINDOW_MINUTES || value > MAX_PAYMENT_WINDOW_MINUTES) {
+    throw new BadRequestException(
+      `paymentWindowMinutes must be between ${MIN_PAYMENT_WINDOW_MINUTES} and ${MAX_PAYMENT_WINDOW_MINUTES}`,
+    );
   }
 }
 

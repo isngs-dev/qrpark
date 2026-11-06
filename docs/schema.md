@@ -8,7 +8,7 @@ Source of truth: `backend/prisma/schema.prisma` and
 `backend/prisma/migrations/`. CI applies the migrations to an empty database
 and fails if the result differs from `schema.prisma`.
 
-Created: Sprint 1 (migration `0001_init`).
+Created: Sprint 1 (migration `0001_init`). Last change: Sprint 2 (`0002_payment_window`).
 
 ---
 
@@ -59,6 +59,7 @@ One row per site. Edited in the Admin Portal; every change audited
 | site_id | uuid | no | PK, FK → site. One row per site |
 | display_name | text | no | `site_setting_display_name_check`: trimmed, 1–100 characters |
 | validity_hours | integer | no | `site_setting_validity_hours_check`: 1–72. Copied onto each ticket at issue; a change never alters an issued ticket |
+| payment_window_minutes | integer | no | default 5. `site_setting_payment_window_minutes_check`: 1–30. How long a PENDING payment blocks its operator before it is ABANDONED (after a Paystack check). Sprint 2 |
 | receipt_org_name | text | yes | `site_setting_receipt_org_name_check`: 1–120 characters when set |
 | receipt_contact_line | text | yes | `site_setting_receipt_contact_line_check`: 1–120 characters when set |
 | updated_at | timestamptz | no | |
@@ -126,8 +127,8 @@ Created in Sprint 1, written from Sprint 2.
 | amount_kobo | integer | no | Snapshot at start. `payment_amount_kobo_check`: > 0 |
 | customer_name | text | yes | 1–100 characters when set |
 | status | payment_status | no | default PENDING |
-| authorization_url, access_code | text | yes | Paystack checkout data |
-| paystack_event | jsonb | yes | Last verified Paystack payload |
+| authorization_url, access_code | text | yes | Paystack checkout data. Returned to the operator only while PENDING. Never logged |
+| paystack_event | jsonb | yes | Last verified Paystack payload, with `authorization.authorization_code` (a reusable card authorization) removed before storing. Never logged |
 | paid_at | timestamptz | yes | Backend time when SUCCESS was recorded; `valid_until` counts from it. `payment_paid_at_iff_success_check`: set if and only if SUCCESS |
 | paystack_paid_at | timestamptz | yes | Paystack's own paid time, copied from its payload (filled from Sprint 2). Reconciliation only: **never used for validity**. No CHECK |
 | created_at, updated_at | timestamptz | no | |
@@ -222,3 +223,4 @@ Indexes: `(site_id, occurred_at)`, `(site_id, target_type, target_id)`.
 | Migration | Sprint | What |
 |---|---|---|
 | `0001_init` | 1 | All nine tables, the CHECKs, `payment_one_pending_per_operator`, the `ticket_requires_success_payment` and `audit_log_append_only` triggers |
+| `0002_payment_window` | 2 | `site_setting.payment_window_minutes` (default 5, CHECK 1–30) |

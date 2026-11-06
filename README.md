@@ -47,4 +47,7 @@ assembleDebug`. The APK is `android/app/build/outputs/apk/debug/app-debug.apk`.
 
 Nothing secret is ever committed: no keys, passwords or tokens. `.env` is
 ignored by git; `.env.example` lists the variables with empty values.
-Paystack test keys only, until go-live is approved.
+Paystack test keys only, until go-live is approved: put your `sk_test_` key
+in `backend/.env` as `PAYSTACK_SECRET_KEY` yourself. The backend refuses to
+start with a live key, and the tests never use the real one (they run
+against a fake Paystack).

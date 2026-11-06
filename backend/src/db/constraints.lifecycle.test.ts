@@ -402,6 +402,24 @@ test('validity_hours is 1-72 (site_setting_validity_hours_check)', async () => {
   assert.equal(control, null);
 });
 
+test('payment_window_minutes is 1-30, default 5 (site_setting_payment_window_minutes_check)', async () => {
+  for (const minutes of [0, 31, -5]) {
+    const message = await attemptInRollback(prisma, async (tx) => {
+      const fx = await buildFixture(tx);
+      await tx.$executeRawUnsafe(`UPDATE site_setting SET payment_window_minutes = $1 WHERE site_id = $2::uuid`, minutes, fx.siteId);
+    });
+    assertRefusedBy(message, 'site_setting_payment_window_minutes_check');
+  }
+  const control = await attemptInRollback(prisma, async (tx) => {
+    const fx = await buildFixture(tx);
+    const row = await tx.siteSetting.findUniqueOrThrow({ where: { siteId: fx.siteId } });
+    assert.equal(row.paymentWindowMinutes, 5);
+    await tx.$executeRawUnsafe(`UPDATE site_setting SET payment_window_minutes = 30 WHERE site_id = $1::uuid`, fx.siteId);
+    await tx.$executeRawUnsafe(`UPDATE site_setting SET payment_window_minutes = 1 WHERE site_id = $1::uuid`, fx.siteId);
+  });
+  assert.equal(control, null);
+});
+
 // ---------------------------------------------------------------- audit_log
 
 test('audit_log refuses UPDATE (audit_log is append-only)', async () => {

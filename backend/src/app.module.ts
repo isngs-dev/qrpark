@@ -11,15 +11,47 @@ import { ConfigController } from './config/config.controller';
 import { ConfigService as SiteConfigService } from './config/config.service';
 import { UsersController } from './users/users.controller';
 import { UsersService } from './users/users.service';
+import { LockService } from './lock/lock.service';
+import { HttpPaystackGateway, PaystackGateway } from './paystack/paystack.gateway';
+import { PaystackController } from './paystack/paystack.controller';
+import { assertNotLiveKey } from './paystack/verdicts';
+import { PaymentsController } from './payments/payments.controller';
+import { PaymentsService } from './payments/payments.service';
+import { SettlementService } from './payments/settlement.service';
+import { ReconciliationService } from './jobs/reconciliation.service';
+import { TicketIssuer } from './tickets/ticket-issuer';
+import { TicketsController } from './tickets/tickets.controller';
+import { TicketsService } from './tickets/tickets.service';
 
 @Module({
   imports: [ConfigModule.forRoot({ isGlobal: true }), CoreModule, AuthModule],
-  controllers: [HealthController, ConfigController, UsersController],
+  controllers: [
+    HealthController,
+    ConfigController,
+    UsersController,
+    PaymentsController,
+    PaystackController,
+    TicketsController,
+  ],
   providers: [
     RedisService,
     AuditService,
     SiteConfigService,
     UsersService,
+    LockService,
+    // Test keys only until go-live: a live key stops the app from starting.
+    {
+      provide: PaystackGateway,
+      useFactory: () => {
+        assertNotLiveKey(process.env.PAYSTACK_SECRET_KEY);
+        return new HttpPaystackGateway();
+      },
+    },
+    SettlementService,
+    PaymentsService,
+    ReconciliationService,
+    TicketIssuer,
+    TicketsService,
     // Every endpoint is authenticated and role-checked unless it opts out
     // with @Public(). Enforced here, not in any client.
     { provide: APP_GUARD, useClass: AuthGuard },

@@ -3,7 +3,13 @@ import { IsBoolean, IsIn, IsInt, IsString, Max, MaxLength, Min, ValidateIf } fro
 import type { GateDirection } from '@prisma/client';
 import { CurrentActor, Roles, type Actor } from '../auth/auth.guard';
 import { ConfigService } from './config.service';
-import { MAX_KOBO, MAX_VALIDITY_HOURS, MIN_VALIDITY_HOURS } from './config-rules';
+import {
+  MAX_KOBO,
+  MAX_PAYMENT_WINDOW_MINUTES,
+  MAX_VALIDITY_HOURS,
+  MIN_PAYMENT_WINDOW_MINUTES,
+  MIN_VALIDITY_HOURS,
+} from './config-rules';
 
 /**
  * Admin configuration: categories and prices, settings, gates. ADMIN only,
@@ -47,6 +53,9 @@ class UpdateSettingsDto {
 
   @present('validityHours') @IsInt() @Min(MIN_VALIDITY_HOURS) @Max(MAX_VALIDITY_HOURS)
   validityHours?: number;
+
+  @present('paymentWindowMinutes') @IsInt() @Min(MIN_PAYMENT_WINDOW_MINUTES) @Max(MAX_PAYMENT_WINDOW_MINUTES)
+  paymentWindowMinutes?: number;
 
   // null or "" clears the line.
   @ValidateIf((o: UpdateSettingsDto) => o.receiptOrgName !== undefined && o.receiptOrgName !== null)

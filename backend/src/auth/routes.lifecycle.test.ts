@@ -13,10 +13,13 @@ import { bootTestApp, call, type TestApp } from '../test-support/app';
  * contract; docs/api.md says the same in prose.
  */
 
-type Access = 'PUBLIC' | UserRole[];
+// SIGNED: public to the auth guard, but the Paystack signature is checked:
+// without one it is 401 whoever calls, with or without a token.
+type Access = 'PUBLIC' | 'SIGNED' | UserRole[];
 
 const ANY: UserRole[] = ['ADMIN', 'ENTRY_OPERATOR', 'EXIT_OPERATOR'];
 const ADMIN: UserRole[] = ['ADMIN'];
+const ENTRY: UserRole[] = ['ENTRY_OPERATOR'];
 
 const ROUTES: Record<string, Access> = {
   'GET /health': 'PUBLIC',
@@ -40,6 +43,13 @@ const ROUTES: Record<string, Access> = {
   'POST /admin/users': ADMIN,
   'PATCH /admin/users/:id': ADMIN,
   'POST /admin/users/:id/password': ADMIN,
+
+  'GET /categories': ENTRY,
+  'POST /payments': ENTRY,
+  'GET /payments/:id': ENTRY,
+  'POST /paystack/webhook': 'SIGNED',
+  'GET /tickets/recent': ENTRY,
+  'POST /tickets/reprint': ENTRY,
 };
 
 let t: TestApp;
@@ -84,6 +94,9 @@ test('route coverage: no token is 401 on every non-public route; public routes n
     if (access === 'PUBLIC') {
       assert.notEqual(res.status, 401, `${route} is public but answered 401`);
       assert.notEqual(res.status, 403, `${route} is public but answered 403`);
+    } else if (access === 'SIGNED') {
+      assert.equal(res.status, 401, `${route} without a signature answered ${res.status}`);
+      assert.match(JSON.stringify(res.body), /signature/i, `${route} answered 401 for a reason other than the signature`);
     } else {
       assert.equal(res.status, 401, `${route} without a token answered ${res.status}`);
     }
@@ -94,6 +107,13 @@ test('route coverage: each role is refused (403) where not listed and let throug
   for (const [route, access] of Object.entries(ROUTES)) {
     if (access === 'PUBLIC') continue;
     for (const role of ANY) {
+      if (access === 'SIGNED') {
+        // A token changes nothing: an unsigned webhook is 401 for everyone.
+        const { method, path } = concrete(route);
+        const res = await call(t, method, path, { token: await t.accessToken(t.users[BY_ROLE[role]].id), body: {} });
+        assert.equal(res.status, 401, `${role} with a token got ${res.status} from the unsigned ${route}`);
+        continue;
+      }
       const user = t.users[BY_ROLE[role]];
       // Minted at the user's current token_version, so a logout earlier in
       // the loop cannot make a later call look refused.

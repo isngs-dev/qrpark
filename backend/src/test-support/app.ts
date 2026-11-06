@@ -1,10 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
-import type { INestApplication } from '@nestjs/common';
+import type { INestApplication, LoggerService } from '@nestjs/common';
 import { JwtService, type JwtSignOptions } from '@nestjs/jwt';
 import { PrismaClient, type UserRole } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { requireDatabase, uniqueCode } from './db';
+import { installFakePaystack, type FakePaystack } from './paystack';
 
 /**
  * Boots the real application over HTTP against a freshly created site.
@@ -15,6 +16,10 @@ import { requireDatabase, uniqueCode } from './db';
  * database clears them.
  *
  * Passwords are generated per run and never printed.
+ *
+ * Paystack is ALWAYS the fake (test-support/paystack.ts), and
+ * PAYSTACK_SECRET_KEY is overwritten with a per-run sk_test_ value, so a real
+ * key in backend/.env can never be used by a test. Background jobs are off.
  */
 
 export interface TestUser {
@@ -33,6 +38,9 @@ export interface TestApp {
   entryGateId: string;
   exitGateId: string;
   users: { admin: TestUser; entry: TestUser; exit: TestUser };
+  paystack: FakePaystack;
+  /** Every log line the app wrote, when booted with captureLogs. */
+  logs: string[];
   /** A valid access token for this user at its CURRENT token_version. */
   accessToken(userId: string): Promise<string>;
   /** Signs arbitrary claims with the app's own secret. */
@@ -40,9 +48,11 @@ export interface TestApp {
   close(): Promise<void>;
 }
 
-export async function bootTestApp(): Promise<TestApp> {
+export async function bootTestApp(options: { captureLogs?: boolean } = {}): Promise<TestApp> {
   requireDatabase();
   process.env.JWT_SECRET ??= randomBytes(32).toString('hex');
+  process.env.PAYSTACK_SECRET_KEY = `sk_test_${randomBytes(16).toString('hex')}`;
+  process.env.DISABLE_JOBS = '1';
   const siteCode = uniqueCode('app');
   process.env.SITE_CODE = siteCode;
 
@@ -85,10 +95,24 @@ export async function bootTestApp(): Promise<TestApp> {
 
   // abortOnError off: Nest would otherwise exit the process silently (logger is off) and
   // the test would report only 'test failed'.
-  const app = await NestFactory.create(AppModule, { rawBody: true, logger: false, abortOnError: false });
+  const logs: string[] = [];
+  const capture: LoggerService = {
+    log: (m: unknown, ...r: unknown[]) => logs.push(['LOG', m, ...r].map(String).join(' ')),
+    warn: (m: unknown, ...r: unknown[]) => logs.push(['WARN', m, ...r].map(String).join(' ')),
+    error: (m: unknown, ...r: unknown[]) => logs.push(['ERROR', m, ...r].map(String).join(' ')),
+    debug: (m: unknown, ...r: unknown[]) => logs.push(['DEBUG', m, ...r].map(String).join(' ')),
+    verbose: (m: unknown, ...r: unknown[]) => logs.push(['VERBOSE', m, ...r].map(String).join(' ')),
+  };
+  const app = await NestFactory.create(AppModule, {
+    rawBody: true,
+    logger: options.captureLogs ? capture : false,
+    abortOnError: false,
+  });
   let jwt: JwtService;
+  let paystack: FakePaystack;
   try {
     jwt = app.get(JwtService);
+    paystack = installFakePaystack(app);
     configureApp(app);
     await app.listen(0);
   } catch (error) {
@@ -108,6 +132,8 @@ export async function bootTestApp(): Promise<TestApp> {
     entryGateId: entryGate.id,
     exitGateId: exitGate.id,
     users,
+    paystack,
+    logs,
     async accessToken(userId) {
       const user = await prisma.appUser.findUniqueOrThrow({ where: { id: userId } });
       return jwt.sign(
