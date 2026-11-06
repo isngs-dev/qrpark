@@ -1,0 +1,17 @@
+// QR Parking database schema.
+//
+// Models arrive in Sprint 1, together with docs/schema.md. Until then this file
+// only wires Prisma to Postgres.
+//
+// TEMPORARY: with no models, `prisma generate` refuses to run, so the backend
+// `build` and `prisma:generate` scripts and CI pass --allow-no-models.
+// Sprint 1 removes the flag in all three places once the first models exist.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}

@@ -1,0 +1,37 @@
+# Node
+node_modules/
+dist/
+dist-test/
+.next/
+*.tsbuildinfo
+*.log
+
+# Secrets. Only the example file is committed.
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Android
+.gradle/
+# Kotlin 2.x compiler session files, present only while a build runs.
+.kotlin/
+build/
+local.properties
+*.apk
+*.apk.sha256
+*.aab
+# Signing keys of any format. Never in the repo.
+*.keystore
+*.jks
+*.p12
+
+# Claude Code local state
+.claude/
+
+# IDE
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store

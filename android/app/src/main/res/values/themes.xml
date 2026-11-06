@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Light, never DayNight, and dynamic colour is never applied: the device
+  wallpaper must not recolour the greens and reds that say whether a vehicle
+  may leave. The full theme is copied from eparking in Sprint 4.
+-->
+<resources>
+    <style name="Theme.QrPark" parent="Theme.Material3.Light.NoActionBar" />
+</resources>
