@@ -156,15 +156,17 @@ export async function call(
   t: TestApp,
   method: string,
   path: string,
-  options: { token?: string; body?: unknown } = {},
+  options: { token?: string; body?: unknown; rawBody?: string; headers?: Record<string, string> } = {},
 ): Promise<{ status: number; body: any }> {
+  const hasBody = options.body !== undefined || options.rawBody !== undefined;
   const res = await fetch(`${t.url}${path}`, {
     method,
     headers: {
-      ...(options.body !== undefined ? { 'content-type': 'application/json' } : {}),
+      ...(hasBody ? { 'content-type': 'application/json' } : {}),
       ...(options.token ? { authorization: `Bearer ${options.token}` } : {}),
+      ...(options.headers ?? {}),
     },
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+    body: options.rawBody ?? (options.body !== undefined ? JSON.stringify(options.body) : undefined),
   });
   const text = await res.text();
   let body: unknown = text;

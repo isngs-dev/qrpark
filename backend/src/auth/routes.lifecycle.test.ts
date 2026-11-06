@@ -20,6 +20,8 @@ type Access = 'PUBLIC' | 'SIGNED' | UserRole[];
 const ANY: UserRole[] = ['ADMIN', 'ENTRY_OPERATOR', 'EXIT_OPERATOR'];
 const ADMIN: UserRole[] = ['ADMIN'];
 const ENTRY: UserRole[] = ['ENTRY_OPERATOR'];
+const EXIT: UserRole[] = ['EXIT_OPERATOR'];
+const OPERATORS: UserRole[] = ['ENTRY_OPERATOR', 'EXIT_OPERATOR'];
 
 const ROUTES: Record<string, Access> = {
   'GET /health': 'PUBLIC',
@@ -50,6 +52,8 @@ const ROUTES: Record<string, Access> = {
   'POST /paystack/webhook': 'SIGNED',
   'GET /tickets/recent': ENTRY,
   'POST /tickets/reprint': ENTRY,
+  'POST /tickets/validate': EXIT,
+  'POST /tickets/check': OPERATORS,
 };
 
 let t: TestApp;

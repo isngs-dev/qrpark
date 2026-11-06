@@ -8,7 +8,7 @@ Source of truth: `backend/prisma/schema.prisma` and
 `backend/prisma/migrations/`. CI applies the migrations to an empty database
 and fails if the result differs from `schema.prisma`.
 
-Created: Sprint 1 (migration `0001_init`). Last change: Sprint 2 (`0002_payment_window`).
+Created: Sprint 1 (migration `0001_init`). Last change: Sprint 2 (`0002_payment_window`). Sprint 3 added no migration.
 
 ---
 
@@ -192,10 +192,12 @@ no ticket leaves no trace of itself (tested: the table has no such column).
 | result | scan_result | no | `scan_event_result_by_kind_check`: ACTIVE only for CHECK, VALID only for EXIT |
 | gate_id | uuid | no | FK → gate |
 | operator_id | uuid | no | FK → app_user |
-| device_ref | text | no | The app's installation id. Record only, never trusted. `scan_event_device_ref_check`: 1–64 characters |
+| device_ref | text | no | The app's installation id, from the `X-Device-Id` header (1–64 of `A-Z a-z 0-9 _ -`). Record only, never trusted. `scan_event_device_ref_check`: 1–64 characters |
 | occurred_at | timestamptz | no | default `now()`, backend time |
 
 Indexes: `(site_id, occurred_at)`, `(ticket_id)`.
+
+Written from Sprint 3 by `POST /tickets/validate` (kind EXIT) and `POST /tickets/check` (kind CHECK), one row per scan, at the database's `now()`. A VALID row is written in the same transaction as the closing `UPDATE ticket`, so its `occurred_at` equals the ticket's `used_at`.
 
 ## audit_log
 

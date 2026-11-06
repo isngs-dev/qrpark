@@ -21,3 +21,9 @@ export function assertGateAcceptsEntry(gate: { code: string; direction: GateDire
     `Gate "${gate.code}" is an exit gate; payments are taken at entry gates.`,
   );
 }
+
+/** Exit validation happens only at an exit gate. */
+export function assertGateAcceptsExit(gate: { code: string; direction: GateDirection }): void {
+  if (gate.direction === 'EXIT') return;
+  throw new BadRequestException(`Gate "${gate.code}" is an entry gate; tickets are validated at exit gates.`);
+}

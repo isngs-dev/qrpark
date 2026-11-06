@@ -22,6 +22,9 @@ import { ReconciliationService } from './jobs/reconciliation.service';
 import { TicketIssuer } from './tickets/ticket-issuer';
 import { TicketsController } from './tickets/tickets.controller';
 import { TicketsService } from './tickets/tickets.service';
+import { ScanStore } from './scans/scan-store';
+import { ScansController } from './scans/scans.controller';
+import { ScansService } from './scans/scans.service';
 
 @Module({
   imports: [ConfigModule.forRoot({ isGlobal: true }), CoreModule, AuthModule],
@@ -32,6 +35,7 @@ import { TicketsService } from './tickets/tickets.service';
     PaymentsController,
     PaystackController,
     TicketsController,
+    ScansController,
   ],
   providers: [
     RedisService,
@@ -52,6 +56,8 @@ import { TicketsService } from './tickets/tickets.service';
     ReconciliationService,
     TicketIssuer,
     TicketsService,
+    ScanStore,
+    ScansService,
     // Every endpoint is authenticated and role-checked unless it opts out
     // with @Public(). Enforced here, not in any client.
     { provide: APP_GUARD, useClass: AuthGuard },

@@ -4,7 +4,7 @@
 in the same commit as any endpoint change. If it and the code disagree, say
 which is wrong.
 
-Created: Sprint 1. Last change: Sprint 2 (payments, webhook, tickets). The access column is enforced by the global guard and
+Created: Sprint 1. Last change: Sprint 3 (validate and check). The access column is enforced by the global guard and
 pinned by `backend/src/auth/routes.lifecycle.test.ts`, which fails if a route
 is added without being listed there.
 
@@ -67,6 +67,8 @@ is added without being listed there.
 | `POST /paystack/webhook` | signed | | | |
 | `GET /tickets/recent` | | | yes (own) | |
 | `POST /tickets/reprint` | | | yes | |
+| `POST /tickets/validate` | | | | yes |
+| `POST /tickets/check` | | | yes | yes |
 
 A route with no `@Roles()` is refused for every role (the guard fails closed).
 
@@ -428,3 +430,108 @@ or
   same 404 `No active ticket found`, and nothing is audited.
 - Audited: `TICKET_REPRINTED` by the reprinting operator, detail
   `{ ticketNumber, via: "id" | "number", issuedBy: { id, username } }`.
+
+---
+
+## Scans: validate and check
+
+Written before the code (Sprint 3). Both routes take the scanned text and the
+app's installation id, and **every request that reaches a scan result writes
+one `scan_event`** (gate, operator, `device_ref`, database time; the ticket
+when one was found). A request refused before that (401, 403, a 400 for a bad
+body or header, or a gate refusal) is not a scan and writes nothing.
+
+### Request (both routes)
+
+Header: `X-Device-Id: <installation id>` (1–64 of `A-Z a-z 0-9 _ -`). Missing
+or invalid: 400, nothing written.
+
+```json
+{ "token": "<the scanned text>" }
+```
+
+- `token` must be a string of at most 2,048 characters (400 otherwise). It is
+  trimmed (a scanner may add a newline). A string that is not of the token's
+  shape (43 base64url characters) is **not** a 400: it is the result
+  `INVALID_QR`, decided before any database lookup.
+- The token is **never** echoed in a response (any status), never put in an
+  error message, never logged and never stored outside `ticket.token`. The same
+  holds for the `X-Device-Id` value in a 400.
+
+### `POST /tickets/validate` (EXIT_OPERATOR) → 200
+
+Closes the ticket. The operator's gate must be in service and face EXIT (400
+otherwise, nothing written).
+
+One conditional statement does it, on the **database clock**:
+
+```sql
+UPDATE ticket SET status = 'USED', used_at = now(), used_gate_id = $gate, used_by_id = $operator
+WHERE site_id = $site AND token = $1 AND status = 'ACTIVE' AND valid_until >= now()
+RETURNING ...
+```
+
+Of any number of simultaneous validations of one ticket, exactly one is
+`VALID`; the rest are `ALREADY_USED`. The update and the scan record commit
+together or not at all. If the update changed nothing, a read (which never
+writes) decides between `ALREADY_USED`, `EXPIRED` and `NOT_FOUND`.
+
+### `POST /tickets/check` (ENTRY_OPERATOR, EXIT_OPERATOR) → 200
+
+**Read-only**: never changes the ticket. An entry operator's gate must be an
+in-service ENTRY gate, an exit operator's an in-service EXIT gate (400
+otherwise, nothing written). Same response shape; `ACTIVE` in place of
+`VALID`.
+
+### Response (both routes)
+
+Every scan outcome is **200** with a `result`. `scannedAt` is the scan
+record's database time.
+
+| `result` | Route | Screen | Extra fields |
+|---|---|---|---|
+| `VALID` | validate | Green "Valid — allow exit" | `ticket` |
+| `ACTIVE` | check | Paid, not used, still valid | `ticket` (with `validUntil`) |
+| `ALREADY_USED` | both | Red "Already used" | `usedAt`, `usedGate`, `usedBy`, `usedByYou`, `ticket` |
+| `EXPIRED` | both | Red "Expired" | `validUntil`, `ticket` |
+| `NOT_FOUND` | both | Red "Ticket not found" | none |
+| `INVALID_QR` | both | Red "Not one of our tickets" | none |
+
+```json
+{ "result": "VALID", "scannedAt": "2026-11-06T09:15:02.123Z",
+  "ticket": { "ticketNumber": "K7MP-3QZ9", "categoryName": "Car", "customerName": "Ada Obi",
+              "paidAt": "...", "validUntil": "..." } }
+
+{ "result": "ALREADY_USED", "scannedAt": "...",
+  "usedAt": "2026-11-06T09:15:02.123Z",
+  "usedGate": { "code": "EXIT_1", "name": "Exit 1" },
+  "usedBy": { "name": "Exit operator 1", "username": "exit-1" },
+  "usedByYou": false,
+  "ticket": { ... } }
+
+{ "result": "EXPIRED", "scannedAt": "...", "validUntil": "...", "ticket": { ... } }
+
+{ "result": "NOT_FOUND", "scannedAt": "..." }
+{ "result": "INVALID_QR", "scannedAt": "..." }
+```
+
+- `usedByYou` is true when the calling operator is the one who closed the
+  ticket.
+- **A retry is never re-approved.** If the `VALID` reply was lost (the
+  connection dropped) and the operator scans again, the answer is
+  `ALREADY_USED` with `usedByYou: true` and the original `usedAt`: the ticket
+  was closed by the first request. The app shows it as such; it never turns it
+  into "Valid".
+- Expiry: a ticket is valid while `now() <= valid_until` (database time).
+
+### Errors
+
+| Status | When | App shows |
+|---|---|---|
+| 400 | bad body or header, or the operator's gate does not allow it | the message |
+| 401 / 403 | not signed in / wrong role | sign-in / refusal |
+| 503 `Cannot verify` | the backend cannot decide safely (for example, it read the ticket as still valid after the closing update changed nothing) | Grey "Cannot verify"; **never** "Valid" |
+| 5xx, or no connection | anything else | Grey "Cannot verify — no connection"; never "Valid" |
+
+There is no offline approval and no bypass: only a `VALID` result from this
+backend lets a vehicle out.
