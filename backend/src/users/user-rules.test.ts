@@ -67,3 +67,16 @@ test('update plan: only what changed; nothing is an error; which changes end ses
   assert.equal(endsSessions({ isActive: false }), true);
   assert.equal(endsSessions({ isActive: true }), false);
 });
+
+test('gate for role: a payment operator needs an in-service BOOTH, and only a booth', () => {
+  const booth = { direction: 'BOOTH' as const, isActive: true, code: 'BOOTH_1' };
+  assert.doesNotThrow(() => assertGateForRole('PAYMENT_OPERATOR', booth));
+  assert.throws(() => assertGateForRole('PAYMENT_OPERATOR', null), BadRequestException);
+  assert.throws(() => assertGateForRole('PAYMENT_OPERATOR', { ...booth, isActive: false }), BadRequestException);
+  for (const direction of ['ENTRY', 'EXIT'] as const) {
+    assert.throws(() => assertGateForRole('PAYMENT_OPERATOR', { ...booth, direction }), BadRequestException);
+  }
+  for (const role of ['ENTRY_OPERATOR', 'EXIT_OPERATOR'] as const) {
+    assert.throws(() => assertGateForRole(role, booth), BadRequestException, `${role} accepted a booth`);
+  }
+});

@@ -51,7 +51,7 @@ test(`${CLIENTS} separate connections call consume() for one ticket at once: exa
     assert.equal(winners.length, 1, `round ${round}: ${winners.length} connections closed the same ticket`);
     assert.equal(winners[0]!.ticketId, tk.id);
     const row = await t.prisma.ticket.findUniqueOrThrow({ where: { id: tk.id } });
-    assert.equal(row.status, 'USED');
-    assert.equal(row.usedAt!.getTime(), winners[0]!.usedAt.getTime());
+    assert.equal(row.validationStatus, 'VALIDATED');
+    assert.equal(row.validatedAt!.getTime(), winners[0]!.usedAt.getTime());
   }
 });

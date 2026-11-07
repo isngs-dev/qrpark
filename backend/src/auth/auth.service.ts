@@ -48,7 +48,7 @@ export class AuthService {
     const username = typeof rawUsername === 'string' ? rawUsername.trim().toLowerCase() : '';
 
     const user = USERNAME_PATTERN.test(username)
-      ? await this.prisma.appUser.findUnique({ where: { siteId_username: { siteId, username } } })
+      ? await this.prisma.appUser.findFirst({ where: { siteId, username, deletedAt: null } })
       : null;
 
     // Verify against a dummy hash when the user does not exist, so the

@@ -7,7 +7,8 @@ import type { GateDirection, UserRole } from '@prisma/client';
  * database.
  *
  * Copied from eparking backend/src/seed-test-data.rules.ts and adapted: flat
- * prices, two gates, one entry and one exit operator, no passes.
+ * prices; an entry gate, two payment booths and an exit gate; one test
+ * operator per job (entry, payment, exit); no passes.
  *
  * EVERY AMOUNT HERE IS A TEST VALUE. Garki's real categories and prices are
  * an open question (CLAUDE.md). The figures are eparking's test first-hour
@@ -31,6 +32,8 @@ export function testSiteProblem(siteCode: string | undefined): string | null {
 export const TEST_GATES: ReadonlyArray<{ code: string; name: string; direction: GateDirection }> = [
   { code: 'ENTRY_1', name: 'Test entry 1', direction: 'ENTRY' },
   { code: 'EXIT_1', name: 'Test exit 1', direction: 'EXIT' },
+  { code: 'BOOTH_1', name: 'Test booth 1', direction: 'BOOTH' },
+  { code: 'BOOTH_2', name: 'Test booth 2', direction: 'BOOTH' },
 ];
 
 /** TEST VALUES, integer kobo, flat per vehicle. */
@@ -46,6 +49,7 @@ export const TEST_CATEGORIES: ReadonlyArray<{ code: string; name: string; priceK
 /** Neutral names: an account never says who it was given to. */
 export const TEST_ACCOUNTS: ReadonlyArray<{ username: string; name: string; role: UserRole; gateCode: string }> = [
   { username: 'entry-1', name: 'Test entry operator 1', role: 'ENTRY_OPERATOR', gateCode: 'ENTRY_1' },
+  { username: 'booth-1', name: 'Test payment operator 1', role: 'PAYMENT_OPERATOR', gateCode: 'BOOTH_1' },
   { username: 'exit-1', name: 'Test exit operator 1', role: 'EXIT_OPERATOR', gateCode: 'EXIT_1' },
 ];
 

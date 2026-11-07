@@ -50,7 +50,7 @@ export class UsersService {
   async list() {
     const siteId = await this.site.getId();
     return this.prisma.appUser.findMany({
-      where: { siteId },
+      where: { siteId, deletedAt: null },
       orderBy: [{ isActive: 'desc' }, { username: 'asc' }],
       select: VIEW,
     });
@@ -58,7 +58,7 @@ export class UsersService {
 
   async get(id: string) {
     const siteId = await this.site.getId();
-    const user = await this.prisma.appUser.findFirst({ where: { id, siteId }, select: VIEW });
+    const user = await this.prisma.appUser.findFirst({ where: { id, siteId, deletedAt: null }, select: VIEW });
     if (!user) throw new NotFoundException('Unknown user at this site');
     return user;
   }
@@ -129,7 +129,7 @@ export class UsersService {
         SELECT id FROM app_user WHERE site_id = ${siteId}::uuid AND role = 'ADMIN' ORDER BY id FOR UPDATE`;
 
       const current = await tx.appUser.findFirst({
-        where: { id, siteId },
+        where: { id, siteId, deletedAt: null },
         select: { id: true, username: true, name: true, role: true, gateId: true, isActive: true, gate: { select: { code: true } } },
       });
       if (!current) throw new NotFoundException('Unknown user at this site');
@@ -148,7 +148,7 @@ export class UsersService {
       }
 
       const otherActiveAdmins = await tx.appUser.count({
-        where: { siteId, role: UserRole.ADMIN, isActive: true, id: { not: current.id } },
+        where: { siteId, role: UserRole.ADMIN, isActive: true, deletedAt: null, id: { not: current.id } },
       });
       assertNotLastAdmin(current, update, otherActiveAdmins);
 
@@ -173,6 +173,55 @@ export class UsersService {
   }
 
   /**
+   * A SOFT delete (docs/api.md, "DELETE /admin/users/:id"): deleted_at set,
+   * the account deactivated and its sessions ended at once (token_version);
+   * its username freed for a new account (app_user_live_username_key covers
+   * live accounts only); its history kept, so tickets, payments, scans and
+   * audit rows still name it.
+   *
+   * Nobody deletes themselves. The last active admin cannot be deleted: the
+   * site's ADMIN rows are locked first, as in update(), so two admins
+   * deleting each other at the same moment are serialised and the second is
+   * refused.
+   */
+  async remove(id: string, actorId: string) {
+    const siteId = await this.site.getId();
+    if (id === actorId) throw new BadRequestException('You cannot delete your own account');
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`
+        SELECT id FROM app_user WHERE site_id = ${siteId}::uuid AND role = 'ADMIN' ORDER BY id FOR UPDATE`;
+
+      const current = await tx.appUser.findFirst({
+        where: { id, siteId, deletedAt: null },
+        select: { id: true, username: true, role: true, isActive: true },
+      });
+      if (!current) throw new NotFoundException('Unknown user at this site');
+
+      if (current.role === UserRole.ADMIN && current.isActive) {
+        const otherActiveAdmins = await tx.appUser.count({
+          where: { siteId, role: UserRole.ADMIN, isActive: true, deletedAt: null, id: { not: current.id } },
+        });
+        if (otherActiveAdmins === 0) throw new BadRequestException('The last active admin cannot be deleted');
+      }
+
+      await tx.appUser.update({
+        where: { id },
+        data: { deletedAt: new Date(), isActive: false, tokenVersion: { increment: 1 } },
+      });
+      await this.audit.record({
+        client: tx,
+        actorId,
+        action: 'USER_DELETED',
+        targetType: 'app_user',
+        targetId: current.id,
+        detail: { username: current.username, role: current.role },
+      });
+      return { id: current.id, deleted: true };
+    });
+  }
+
+  /**
    * Set a new password. No old password: an admin resetting an operator has
    * none, which is why only ADMIN reaches this route. Ends the user's
    * sessions, and is audited (without the password).
@@ -183,7 +232,7 @@ export class UsersService {
     const passwordHash = await AuthService.hash(password);
 
     return this.prisma.$transaction(async (tx) => {
-      const user = await tx.appUser.findFirst({ where: { id, siteId }, select: { id: true, username: true } });
+      const user = await tx.appUser.findFirst({ where: { id, siteId, deletedAt: null }, select: { id: true, username: true } });
       if (!user) throw new NotFoundException('Unknown user at this site');
       await tx.appUser.update({
         where: { id },

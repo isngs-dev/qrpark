@@ -36,8 +36,9 @@ export interface TestApp {
   siteId: string;
   siteCode: string;
   entryGateId: string;
+  boothGateId: string;
   exitGateId: string;
-  users: { admin: TestUser; entry: TestUser; exit: TestUser };
+  users: { admin: TestUser; entry: TestUser; booth: TestUser; exit: TestUser };
   paystack: FakePaystack;
   /** Every log line the app wrote, when booted with captureLogs. */
   logs: string[];
@@ -59,10 +60,13 @@ export async function bootTestApp(options: { captureLogs?: boolean } = {}): Prom
   const prisma = new PrismaClient();
   const site = await prisma.site.create({ data: { code: siteCode } });
   await prisma.siteSetting.create({
-    data: { siteId: site.id, displayName: 'Test Market', validityHours: 12 },
+    data: { siteId: site.id, displayName: 'Test Market' },
   });
   const entryGate = await prisma.gate.create({
     data: { siteId: site.id, code: 'ENTRY_1', name: 'Entry 1', direction: 'ENTRY' },
+  });
+  const boothGate = await prisma.gate.create({
+    data: { siteId: site.id, code: 'BOOTH_1', name: 'Booth 1', direction: 'BOOTH' },
   });
   const exitGate = await prisma.gate.create({
     data: { siteId: site.id, code: 'EXIT_1', name: 'Exit 1', direction: 'EXIT' },
@@ -86,6 +90,7 @@ export async function bootTestApp(options: { captureLogs?: boolean } = {}): Prom
   const users = {
     admin: await makeUser('admin', 'ADMIN', null),
     entry: await makeUser('entry.op', 'ENTRY_OPERATOR', entryGate.id),
+    booth: await makeUser('booth.op', 'PAYMENT_OPERATOR', boothGate.id),
     exit: await makeUser('exit.op', 'EXIT_OPERATOR', exitGate.id),
   };
 
@@ -130,6 +135,7 @@ export async function bootTestApp(options: { captureLogs?: boolean } = {}): Prom
     siteId: site.id,
     siteCode,
     entryGateId: entryGate.id,
+    boothGateId: boothGate.id,
     exitGateId: exitGate.id,
     users,
     paystack,

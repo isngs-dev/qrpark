@@ -46,16 +46,17 @@ export function assertPassword(password: string): void {
   }
 }
 
-/** The gate direction an operator role works at; null for ADMIN. */
+/** The kind of location an operator's job works at; null for ADMIN. */
 export function directionFor(role: UserRole): GateDirection | null {
   if (role === UserRole.ENTRY_OPERATOR) return 'ENTRY';
+  if (role === UserRole.PAYMENT_OPERATOR) return 'BOOTH';
   if (role === UserRole.EXIT_OPERATOR) return 'EXIT';
   return null;
 }
 
 /**
- * An admin has no gate. An operator has exactly one, in service, facing the
- * operator's direction. The database enforces only "admin none, operator
+ * An admin has no gate. An operator has exactly one location, in service, of
+ * the kind its job works at (ENTRY, BOOTH or EXIT). The database enforces only "admin none, operator
  * one" (app_user_gate_by_role_check); direction and in-service are here.
  */
 export function assertGateForRole(

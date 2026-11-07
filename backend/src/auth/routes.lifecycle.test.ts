@@ -17,11 +17,13 @@ import { bootTestApp, call, type TestApp } from '../test-support/app';
 // without one it is 401 whoever calls, with or without a token.
 type Access = 'PUBLIC' | 'SIGNED' | UserRole[];
 
-const ANY: UserRole[] = ['ADMIN', 'ENTRY_OPERATOR', 'EXIT_OPERATOR'];
+const ANY: UserRole[] = ['ADMIN', 'ENTRY_OPERATOR', 'PAYMENT_OPERATOR', 'EXIT_OPERATOR'];
 const ADMIN: UserRole[] = ['ADMIN'];
 const ENTRY: UserRole[] = ['ENTRY_OPERATOR'];
 const EXIT: UserRole[] = ['EXIT_OPERATOR'];
-const OPERATORS: UserRole[] = ['ENTRY_OPERATOR', 'EXIT_OPERATOR'];
+const PAYMENT: UserRole[] = ['PAYMENT_OPERATOR'];
+const ENTRY_AND_PAYMENT: UserRole[] = ['ENTRY_OPERATOR', 'PAYMENT_OPERATOR'];
+const OPERATORS: UserRole[] = ['ENTRY_OPERATOR', 'PAYMENT_OPERATOR', 'EXIT_OPERATOR'];
 
 const ROUTES: Record<string, Access> = {
   'GET /health': 'PUBLIC',
@@ -44,14 +46,18 @@ const ROUTES: Record<string, Access> = {
   'GET /admin/users/:id': ADMIN,
   'POST /admin/users': ADMIN,
   'PATCH /admin/users/:id': ADMIN,
+  'DELETE /admin/users/:id': ADMIN,
   'POST /admin/users/:id/password': ADMIN,
 
   'GET /categories': ENTRY,
-  'POST /payments': ENTRY,
-  'GET /payments/:id': ENTRY,
-  'POST /paystack/webhook': 'SIGNED',
+  'POST /tickets': ENTRY,
   'GET /tickets/recent': ENTRY,
+  'GET /tickets/lookup': ENTRY_AND_PAYMENT,
   'POST /tickets/reprint': ENTRY,
+  'POST /payments/cash': PAYMENT,
+  'POST /payments/card': PAYMENT,
+  'GET /payments/:id': PAYMENT,
+  'POST /paystack/webhook': 'SIGNED',
   'POST /tickets/validate': EXIT,
   'POST /tickets/check': OPERATORS,
 };
@@ -85,9 +91,10 @@ function concrete(route: string): { method: string; path: string } {
   return { method, path: path.replace(':id', randomUUID()) };
 }
 
-const BY_ROLE: Record<UserRole, 'admin' | 'entry' | 'exit'> = {
+const BY_ROLE: Record<UserRole, 'admin' | 'entry' | 'booth' | 'exit'> = {
   ADMIN: 'admin',
   ENTRY_OPERATOR: 'entry',
+  PAYMENT_OPERATOR: 'booth',
   EXIT_OPERATOR: 'exit',
 };
 

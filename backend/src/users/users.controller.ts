@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, ParseUUIDPipe, Patch, Post } from '@nestjs/common';
 import { IsBoolean, IsIn, IsString, IsUUID, MaxLength, MinLength, ValidateIf } from 'class-validator';
 import type { UserRole } from '@prisma/client';
 import { CurrentActor, Roles, type Actor } from '../auth/auth.guard';
@@ -11,7 +11,7 @@ import { MIN_PASSWORD_LENGTH } from './user-rules';
  * No route returns a password hash.
  */
 
-const ROLES: UserRole[] = ['ADMIN', 'ENTRY_OPERATOR', 'EXIT_OPERATOR'];
+const ROLES: UserRole[] = ['ADMIN', 'ENTRY_OPERATOR', 'PAYMENT_OPERATOR', 'EXIT_OPERATOR'];
 const present = (field: string) => ValidateIf((o: Record<string, unknown>) => o[field] !== undefined);
 
 class CreateUserDto {
@@ -86,6 +86,13 @@ export class UsersController {
     @CurrentActor() actor: Actor,
   ) {
     return this.users.update(id, body, actor.id);
+  }
+
+  /** A soft delete. See docs/api.md. */
+  @Roles('ADMIN')
+  @Delete(':id')
+  remove(@Param('id', new ParseUUIDPipe()) id: string, @CurrentActor() actor: Actor) {
+    return this.users.remove(id, actor.id);
   }
 
   @Roles('ADMIN')

@@ -3,121 +3,204 @@
 Master reference. If code disagrees with this file, the code is wrong or this
 file is stale: say which.
 
+Source: management's Scope of Work ("QR-Based Market Parking Payment &
+Validation System") and the decisions of 2026-11-07 in `CLAUDE.md`, which win
+where the two differ.
+
 ## Actors
 
 - **Entry operator** at an entry gate, with the Android app in Entry mode.
+- **Payment operator** at a payment booth, with the app in Booth mode.
 - **Exit operator** at an exit gate, with the app in Exit mode.
-- **Customer**, with or without a vehicle. Never logs in; holds a paper ticket.
+- **Customer**, with a vehicle. Never logs in; gives no name, plate or phone;
+  holds a paper ticket from entry to exit.
 - **Admin**, in the web Admin Portal.
-- **Paystack**, the only source of truth that a payment succeeded.
+- **Paystack**, the only source of truth that a card payment succeeded.
 
-## 1. Entry: take payment, issue a ticket
+Each operator account has one job (entry, payment or exit) and one location of
+the matching kind, set by the admin. The app opens straight into that job;
+there is no switching.
 
-1. Operator signs in. The app opens in Entry mode (from the operator's role)
-   and shows the operator's gate.
-2. Operator taps **New ticket**.
-3. Operator types the customer's **name** (optional, see open questions) and
-   picks the **vehicle type** from a list. The list and its prices come from
-   the backend.
-4. The app shows the **amount** the backend returned for that type
-   (e.g. "₦500.00"). The app never computes or edits it.
-5. Operator taps **Take payment**. The app sends: category code, name, and an
-   idempotency key for this attempt. The backend:
-   - snapshots the price, creates a PENDING payment with our own reference,
-   - takes the operator's payment-in-progress lock,
-   - starts the Paystack transaction and returns what the app needs to show
-     Paystack's checkout.
-6. The customer pays on Paystack's checkout (card, transfer, USSD) on the
-   device.
-7. The app waits. It shows "Waiting for Paystack to confirm…". It never treats
-   the checkout closing, or any message from the device, as success.
-8. The backend marks the payment SUCCESS only when:
-   - a signed Paystack webhook arrives for our reference, or
-   - after ~20 s without a webhook, Paystack's verify call says success.
-   At that moment, in one transaction, it creates the **ticket**: random QR
-   token, ticket number, `paid_at`, `valid_until = paid_at + validity hours`,
-   snapshot of category name and amount, Paystack reference, operator, gate.
-9. The app sees the ticket and shows it, then **prints** it.
-10. Failed / abandoned / still pending:
-    - FAILED or ABANDONED: the app says so plainly; no ticket; the operator can
-      start again (a new attempt).
-    - Still pending after the wait: the app says "Not confirmed yet" and keeps
-      checking. A background job re-checks pending payments; if Paystack later
-      confirms, the ticket is created and appears in the operator's recent
-      list for printing.
+The same QR is used for the whole visit:
+
+```
+Entry: ticket created, UNPAID  ->  Booth: paid (cash or card), PAID  ->  Exit: VALIDATED
+```
+
+## 1. Entry: issue the ticket
+
+1. Operator signs in. The app opens in Entry mode and shows the operator's
+   entry gate.
+2. Operator taps **New ticket** and picks the **vehicle category** from the list
+   (the list and its prices come from the backend). Nothing else is asked.
+3. The app sends the category code and an idempotency key for this attempt.
+   The backend creates the ticket at once:
+   - an opaque random **token** (the QR) and a short **ticket number**,
+   - the **fee snapshot**: the category's price now, integer kobo,
+   - payment status **UNPAID**, validation status **NOT VALIDATED**,
+   - `valid_until` = the start of the next day in Africa/Lagos, set by the
+     database,
+   - the entry gate, operator, device and backend time.
+   A repeated tap for the same attempt returns the same ticket.
+4. The app shows the ticket and **prints** it (Android print).
+5. The operator hands the ticket to the customer and sends them on to the
+   payment booth.
 
 ### The ticket (printed and on screen)
 
-- Header: organisation / site name (from receipt settings) and logo(s)
+- Header: the GSD logo on the left, the AIC logo on the right; between them the
+  site's organisation name (else its display name) with the contact line
+  beneath (both from the Admin Portal settings). Never "E-Parking".
 - **QR** (opaque token only)
-- Customer name (if given) · Vehicle type · Amount paid
-- Date and time paid (Africa/Lagos) · **Valid until**
-- Paystack reference · Ticket number · Gate / operator
-- A line: "Show this ticket at the exit. It is valid once."
+- Vehicle type · Fee (₦, from the snapshot)
+- Date and time issued (Africa/Lagos) · "Valid today only"
+- Ticket number · Entry gate
+- A line: "Pay at the payment booth. Show this ticket at the exit."
 
-**Reprint**: entry operators can reprint a ticket from their recent list or by
-ticket number. Same QR. The reprint is logged.
+**Reprint**: entry operators can reprint a ticket from their recent list or
+after a lookup by number (§4). Only a ticket issued today and not yet
+validated; the same QR; audited (who reprinted, who issued it).
 
-## 2. Exit: validate and close
+## 2. Payment booth: take payment
 
-1. Operator signs in; the app opens in Exit mode and shows the gate.
+1. Operator signs in. The app opens in Booth mode and shows the booth.
+2. The scan field is focused. The operator scans the ticket with the built-in
+   scanner, or taps **Scan with camera**. The scan only fills the field. If the
+   QR cannot be read, the operator taps **Find by number** (§4) and picks the
+   ticket.
+3. Operator taps **Check**. The backend reads the ticket (read-only) and the
+   screen shows the ticket number, vehicle type, fee and issue time, and one of:
+   - **Paid** (with method and time): nothing more to do.
+   - **Already used**: the ticket was validated at exit.
+   - **Expired** (issued on an earlier day): no payment is taken.
+   - **Unpaid**: one button, **Take payment ₦N** (N is the backend's fee).
+4. Operator taps **Take payment ₦N**. Two buttons: **Cash** and **Card**. No
+   other pop-ups.
+   - **Cash**: one button, **Confirm ₦N cash received**. One tap marks the
+     ticket PAID; the screen shows **Paid**. There is no further "are you sure"
+     dialog: the amount on the button is the confirmation. A double tap does not
+     post twice. The confirmation records operator, booth, device and backend
+     time, and is audited.
+   - **Card**: the Paystack checkout opens on the device. The app waits ("Waiting
+     for Paystack to confirm…"); closing the checkout, or any message from the
+     device, is never success. The ticket becomes PAID only when Paystack
+     confirms (signed webhook, or a verify call). FAILED or ABANDONED is said
+     plainly and the operator can choose again; still pending says "Not
+     confirmed yet" and keeps checking.
+5. The customer keeps the same ticket and goes to the exit.
+
+Rules at the booth:
+- The amount is the ticket's fee snapshot. The app never sends or edits an
+  amount.
+- At most one successful payment per ticket, and at most one pending payment
+  per ticket and per operator, enforced by the database.
+- No payment is taken for an expired ticket, a paid ticket or a validated
+  ticket.
+- No refunds, reversals or corrections in the app. Mistakes are handled
+  off-system; card refunds in the Paystack dashboard.
+
+## 3. Exit: validate and close
+
+1. Operator signs in; the app opens in Exit mode and shows the exit gate.
 2. The field is focused. The operator scans the ticket with the built-in
    scanner, or taps **Scan with camera**. The scan only fills the field.
-3. Operator taps **Validate**. The backend, in one conditional update:
-   - marks the ticket USED if it is ACTIVE and not expired → `VALID`,
+3. Operator taps **Validate**. The backend, in one conditional update on the
+   database clock:
+   - marks the ticket VALIDATED if it is PAID, not validated and not expired →
+     `VALID`,
    - otherwise returns the reason without changing anything.
 4. The result fills the screen in large type and colour:
 
-| Result | Screen | Operator does |
-|---|---|---|
-| `VALID` | Green: "Valid — allow exit", name, vehicle type, paid time | Lets the vehicle out |
-| `ALREADY_USED` | Red: "Already used", when, which gate, which operator | Refuses |
-| `EXPIRED` | Red: "Expired", valid-until | Refuses (sends to entry to pay) |
-| `NOT_FOUND` | Red: "Ticket not found" | Refuses |
-| `INVALID_QR` | Red: "Not one of our tickets" | Refuses |
-| No connection | Grey: "Cannot verify — no connection" | Waits / retries; never lets out on this screen |
+| Ticket | Result | Screen | Operator does |
+|---|---|---|---|
+| PAID, not validated, issued today | `VALID` | Green: "Valid — allow exit", vehicle type, paid time | Lets the vehicle out |
+| UNPAID, issued today | `PAYMENT_REQUIRED` | Red: "Payment required — go to the payment booth" | Sends the customer to the booth |
+| Already validated | `ALREADY_USED` | Red: "Already used", when, which gate, which operator ("by you" when it was this operator) | Refuses |
+| Not validated, issued an earlier day (paid or not) | `EXPIRED` | Red: "Expired", the issue date | Refuses |
+| Well-formed token, no ticket | `NOT_FOUND` | Red: "Ticket not found" | Refuses |
+| Not a token we issue | `INVALID_QR` | Red: "Not one of our tickets" | Refuses |
+| No connection, or the backend cannot verify | — | Grey: "Cannot verify — no connection" | Waits / retries; never lets out on this screen |
 
 5. **Next** clears the screen and refocuses the field.
 
-## 3. Check ticket (both modes)
+A retry after a lost reply is never re-approved: the second answer is
+`ALREADY_USED` ("by you").
 
-Read-only. Scan or type → the backend returns the status and details
-(ACTIVE with valid-until / USED with when and where / EXPIRED / NOT_FOUND /
-INVALID_QR). Nothing changes. Used at entry to catch a customer who returns
-with an old ticket (e.g. one never scanned at exit the day before). An old
-ticket is either USED or EXPIRED, so it is refused.
+## 4. Check, lookup by number, reprint
 
-## 4. Admin Portal
+**Check ticket** (all three jobs; read-only). Scan or type the QR → the backend
+returns the payment status, validation status, fee and times, with the result:
+`ACTIVE` (paid, not validated, not expired), `PAYMENT_REQUIRED`, `ALREADY_USED`,
+`EXPIRED`, `NOT_FOUND` or `INVALID_QR`. Nothing changes. Every check is a
+recorded scan.
+
+**Lookup by number** (entry and payment operators). Customers quote the last
+characters of the ticket number, which are not unique. The operator types 3 or
+more trailing characters; the backend returns **today's** matching tickets
+(vehicle type, issue time, payment and validation status; never the token) and
+the operator picks one. No match is a 404, the same as every miss. The exit
+never accepts a ticket number: only the QR.
+
+**Reprint** (entry operators only): from the recent list or a lookup. Today's
+tickets that are not validated only; the same QR; audited with the actor and
+the original issuer. Every miss is the same 404.
+
+## 5. Admin Portal
 
 - **Sign in** (ADMIN only).
 - **Vehicle types & prices**: add, rename, set price (kobo, shown as naira),
-  enable/disable. Changes are audited.
-- **Settings**: validity hours, site display name, receipt details
-  (organisation name, contact line, logo choice), Paystack mode shown
-  read-only.
-- **Gates & operators**: create gates (entry/exit), create operator accounts,
-  assign each to a gate, activate/deactivate, reset password.
-- **Transactions**: list and search (ticket number, Paystack reference,
-  customer name), filter by date, gate, operator, status. Detail view shows
-  payment, ticket and every scan.
-- **Open tickets** (the exit-discipline tracker):
-  - ACTIVE tickets now (paid, not yet exited, still valid),
-  - **expired without exit** per day, per entry gate, per exit gate's shift —
-    a high count means exits are not being scanned.
-- **Dashboard**: today and a chosen date range — payments, amount collected,
-  failed/abandoned payments, tickets issued, tickets used, active, expired
-  without exit, per gate.
-- **Export**: CSV of transactions for the filtered range.
+  enable/disable. Changes are audited. A price change never changes a ticket
+  already issued.
+- **Settings**: site display name, organisation name and contact line (printed
+  on the ticket), payment window (how long a pending card payment blocks its
+  operator), Paystack mode shown read-only. There is no validity-hours setting:
+  a ticket is valid on the day it was issued.
+- **Locations**: entry gates, payment booths and exit gates; create, rename,
+  take out of service.
+- **Operators**: create accounts with one job (entry, payment, exit) and one
+  location of the matching kind; activate/deactivate; reset password; **delete**.
+  Delete is a soft delete: the account disappears from the accounts list and
+  every picker, cannot sign in, and its sessions end at once; its username can
+  be reused; its history stays (tickets, payments, scans and audit rows still
+  show the operator's name in reports). Nobody can delete or deactivate their
+  own account or the last active admin. Audited (`USER_DELETED`).
+- **Transactions**: list and search (ticket number, payment reference), filter
+  by date, location, operator, category, payment method and status. The detail
+  view shows the ticket, its payments and every scan.
+- **Incomplete sessions**: tickets issued on a day that were never validated at
+  exit, unpaid or paid, per day, entry gate, booth and operator, so the admin
+  can spot vehicles let out without being scanned. For **today** the list also
+  holds vehicles still inside, so today's rows are shown as "in progress", not
+  as incomplete; only a day that has ended has incomplete sessions.
+- **Finance / Revenue**: cash and card revenue separately and in total, per day,
+  per booth and per operator, to compare recorded cash with the physical cash.
+- **Dashboard**: today and a chosen date range — tickets issued (per entry gate
+  and category), payments and amount collected (cash and card separately and
+  in total), unpaid tickets, tickets validated at exit, incomplete sessions,
+  per location and per operator.
+- **Export**: CSV of the filtered transactions and reports. Excel and PDF are
+  to be confirmed with management (Phase 2).
+- No refunds, reversals or status corrections anywhere in the portal.
+- No device registry: devices are controlled through accounts only.
 
-## 5. Background jobs
+## 6. Background jobs
 
-- Pending-payment re-check (verify with Paystack) every few minutes, up to the
-  payment window; then ABANDONED.
-- No job is needed to expire tickets: EXPIRED is derived from `valid_until`.
+- Card payments: delayed verify checks inside the payment window (20, 45, 90,
+  150 and 240 s; 3 s first when Paystack did not answer the start), then a
+  sweep every 2 minutes for anything still PENDING. Past the window, a payment
+  Paystack says is not paid becomes ABANDONED. A check moves a payment only on
+  Paystack's answer.
+- No job expires tickets: EXPIRED is derived from `valid_until` on the database
+  clock.
 
-## 6. Rules that apply everywhere
+## 7. Rules that apply everywhere
 
-- Kobo integers; backend sets amounts; UTC stored, Lagos shown.
-- A device never supplies a billing or validity time.
-- Scanned codes and tokens are never written to logs.
-- Every config change and every reprint is audited (who, what, when).
+- Kobo integers; the backend sets amounts; UTC stored, Lagos shown.
+- A device never supplies a time. `valid_until` and the exit test use the
+  database clock.
+- PAID only from a Paystack-confirmed card payment or a booth cash
+  confirmation; VALIDATED only when PAID.
+- Scanned codes and tokens are never written to logs or error messages.
+- Every config change, every cash confirmation, every reprint and every account
+  change is audited (who, what, when).
+- No offline approval and no offline payment.

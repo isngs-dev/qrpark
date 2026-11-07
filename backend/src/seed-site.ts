@@ -16,13 +16,11 @@ import { assertPassword, normaliseUsername } from './users/user-rules';
  * exists, so it is safe to run on every deploy. Prices, categories and gates
  * are edited in the Admin Portal.
  *
- * validity_hours starts at 12: ASSUMED FOR TESTING. Confirm before go-live
- * (docs/05-known-issues.md T1).
+ * A ticket is valid on its day of issue only (Africa/Lagos): there is no
+ * validity setting (docs/05-known-issues.md T1, closed).
  *
  * Not audited: there is no actor yet. The password is never printed.
  */
-
-export const DEFAULT_VALIDITY_HOURS = 12;
 
 export async function seedSite(options: {
   prisma: PrismaClient;
@@ -49,20 +47,18 @@ export async function seedSite(options: {
   }
 
   const setting = await prisma.siteSetting.findUnique({ where: { siteId: site.id } });
-  if (setting) print(`  kept     settings (validity ${setting.validityHours} h, name "${setting.displayName}")`);
+  if (setting) print(`  kept     settings (name "${setting.displayName}")`);
   else {
     const displayName = (env.SITE_NAME ?? code).trim() || code;
     await prisma.siteSetting.create({
-      data: { siteId: site.id, displayName, validityHours: DEFAULT_VALIDITY_HOURS },
+      data: { siteId: site.id, displayName },
     });
-    print(`  created  settings (validity ${DEFAULT_VALIDITY_HOURS} h - ASSUMED, confirm before go-live; name "${displayName}")`);
+    print(`  created  settings (name "${displayName}")`);
   }
 
   let adminCreated = false;
   if (username !== undefined && password !== undefined) {
-    const existing = await prisma.appUser.findUnique({
-      where: { siteId_username: { siteId: site.id, username } },
-    });
+    const existing = await prisma.appUser.findFirst({ where: { siteId: site.id, username, deletedAt: null } });
     if (existing) print(`  kept     admin ${username} (password not changed)`);
     else {
       await prisma.appUser.create({

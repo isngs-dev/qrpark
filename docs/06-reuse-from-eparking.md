@@ -32,12 +32,13 @@ Not needed: `visits/` flow logic, `pricing/` (hourly), `passes/`,
 |---|---|
 | `pos/.../LoginActivity.kt`, `Session.kt`, `BackendClient.kt` | Login, tokens, API client |
 | `pos/.../CheckoutSheet.kt`, `CheckoutPage.kt`, `CheckoutNavigation.kt`, `VisitPayment.kt` | Paystack checkout and waiting for confirmation |
-| `pos/.../CounterPrint.kt`, `CounterPaper.kt`, `TicketHeader.kt` | Android printing, ticket/receipt layout, header rules |
+| `pos/.../CounterPrint.kt`, `CounterPaper.kt`, `TicketHeader.kt` | Android printing, ticket layout, header rules (the `TicketHeader.kt` layout rules for two logos and a centred brand line) |
 | `pos/.../ScanActivity.kt`, `ScanScreenState.kt` | Camera scan |
 | `dispenser/...` `ScanBurst.kt`, `ScannerKeys.kt` (scanner focus and keyboard-wedge capture) | Built-in scanner support |
 | `pos/.../CategoryPick.kt` | Vehicle type list |
 | `build-logic/` and `android/BUILDING.md` | Release signing, APK naming, HTTPS-only release |
-| Theme, colours, GSD logo drawable | Same look |
+| Theme, colours | Same look |
+| `pos/app/src/main/res/drawable-nodpi/gsd_logo.png`, `aic_logo.png` (at 359c0c1) | Ticket header: GSD logo left, AIC logo right |
 
 Lessons already learned there (do not repeat):
 - Choose hardware by capability, never by device model name.
@@ -53,7 +54,7 @@ Lessons already learned there (do not repeat):
 | `(portal)/staff` | Operators page |
 | `(portal)/settings` | Settings page |
 | `(portal)/finance` | Ideas for the dashboard and transaction list |
-| `globals.css`, `public/gsd-logo.png` | Same look |
+| `globals.css`, `public/gsd-logo.png` (at 359c0c1) | Same look; the portal logo |
 
 ## Deployment
 
@@ -62,3 +63,13 @@ Lessons already learned there (do not repeat):
 | `render.yaml` | Blueprint (rename services; `rootDir`/`dockerContext` lesson) |
 | `docs/deploy-render-test.md` | Runbook |
 | `.github/workflows/` | CI |
+
+## Ticket branding (decided 2026-11-07)
+
+The ticket header follows eparking's `pos/.../TicketHeader.kt` layout rules,
+with the GSD logo on the left and the AIC logo on the right (the two PNGs
+above). The brand line between them is **not** "E-Parking": it is the site's
+organisation name (`receipt_org_name`, else the display name) with the
+contact line (`receipt_contact_line`) beneath, both edited in the Admin Portal.
+The files are copied in the Android sprint (4a) and the portal sprint (5),
+each copy listed with its source path in that sprint's report.

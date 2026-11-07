@@ -37,7 +37,7 @@ export class AuthController {
   }
 
   /** Ends every session of the caller, on every device. */
-  @Roles('ADMIN', 'ENTRY_OPERATOR', 'EXIT_OPERATOR')
+  @Roles('ADMIN', 'ENTRY_OPERATOR', 'PAYMENT_OPERATOR', 'EXIT_OPERATOR')
   @Post('logout')
   @HttpCode(204)
   async logout(@CurrentActor() actor: Actor): Promise<void> {

@@ -26,10 +26,11 @@ test('the six categories, each a valid flat price in integer kobo', () => {
   for (const c of TEST_CATEGORIES) assert.doesNotThrow(() => assertPriceKobo(c.priceKobo), c.code);
 });
 
-test('gates ENTRY_1 and EXIT_1; one entry and one exit operator, each at the matching gate', () => {
-  assert.deepEqual(TEST_GATES.map((g) => `${g.code}:${g.direction}`), ['ENTRY_1:ENTRY', 'EXIT_1:EXIT']);
+test('gates ENTRY_1, EXIT_1, BOOTH_1, BOOTH_2; one operator per job, each at a location of its kind', () => {
+  assert.deepEqual(TEST_GATES.map((g) => `${g.code}:${g.direction}`), ['ENTRY_1:ENTRY', 'EXIT_1:EXIT', 'BOOTH_1:BOOTH', 'BOOTH_2:BOOTH']);
   assert.deepEqual(TEST_ACCOUNTS.map((a) => `${a.username}:${a.role}:${a.gateCode}`), [
     'entry-1:ENTRY_OPERATOR:ENTRY_1',
+    'booth-1:PAYMENT_OPERATOR:BOOTH_1',
     'exit-1:EXIT_OPERATOR:EXIT_1',
   ]);
   for (const a of TEST_ACCOUNTS) assert.equal(normaliseUsername(a.username), a.username);

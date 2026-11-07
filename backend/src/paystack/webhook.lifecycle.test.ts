@@ -1,237 +1,194 @@
 import { after, before, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHmac, randomBytes } from 'node:crypto';
 import { bootTestApp, type TestApp } from '../test-support/app';
 import { postWebhook, successData } from '../test-support/paystack';
-import { addCategory, clearPending, getPayment, startPayment } from '../test-support/payments';
-import { TICKET_NUMBER_PATTERN, TOKEN_PATTERN } from '../tickets/ticket-codes';
-import { TicketIssuer } from '../tickets/ticket-issuer';
+import { newKey } from '../test-support/payments';
+import { as, makeTicket, payRaw, type MadeTicket } from '../test-support/tickets';
 
 /**
- * POST /paystack/webhook: signature first, idempotent settle, the ticket in
- * the same transaction as SUCCESS. Booted with captureLogs so the last test
- * can prove nothing secret reached a log line.
+ * POST /paystack/webhook: signature first, idempotent settle, and the ticket
+ * PAID in the same transaction (ticket row locked first). Booted with
+ * captureLogs so the last test can prove nothing secret reached a log line.
  */
 
 let t: TestApp;
 before(async () => {
   t = await bootTestApp({ captureLogs: true });
-  await addCategory(t, 'CAR', 50_000);
 });
 after(() => t?.close());
 beforeEach(async () => {
-  if (t) await clearPending(t, t.users.entry.id);
+  if (t) await t.prisma.payment.updateMany({ where: { siteId: t.siteId, status: 'PENDING' }, data: { status: 'ABANDONED' } });
 });
 
-async function pending() {
-  const res = await startPayment(t, t.users.entry.id, { categoryCode: 'CAR' });
+async function pendingCard(tk?: MadeTicket) {
+  const ticket = tk ?? (await makeTicket(t));
+  const res = await as(t, t.users.booth.id, 'POST', '/payments/card', { ticketId: ticket.id, idempotencyKey: newKey() });
   assert.equal(res.status, 201, JSON.stringify(res.body));
-  return res.body as { id: string; reference: string; amountKobo: number; authorizationUrl: string; accessCode: string };
+  return { ticket, payment: res.body as { id: string; reference: string; authorizationUrl: string; accessCode: string } };
 }
 
-const success = (p: { reference: string; amountKobo: number }, overrides = {}) => ({
+const success = (reference: string, amountKobo: number, overrides = {}) => ({
   event: 'charge.success',
-  data: successData(p, overrides),
+  data: successData({ reference, amountKobo }, overrides),
 });
 
-async function state(paymentId: string) {
-  const payment = await t.prisma.payment.findUniqueOrThrow({ where: { id: paymentId }, include: { ticket: true } });
-  return payment;
-}
+const rows = async (paymentId: string, ticketId: string) => ({
+  payment: await t.prisma.payment.findUniqueOrThrow({ where: { id: paymentId } }),
+  ticket: await t.prisma.ticket.findUniqueOrThrow({ where: { id: ticketId } }),
+});
 
 // ---------------------------------------------------------------- signature
 
-test('a bad signature is 401 and changes nothing', async () => {
-  const p = await pending();
-  const res = await postWebhook(t.url, success(p), { signature: 'a'.repeat(128) });
-  assert.equal(res.status, 401);
-  const after = await state(p.id);
-  assert.equal(after.status, 'PENDING');
-  assert.equal(after.ticket, null);
-});
-
-test('a missing signature is 401 and changes nothing', async () => {
-  const p = await pending();
-  const res = await postWebhook(t.url, success(p), { signature: null });
-  assert.equal(res.status, 401);
-  assert.equal((await state(p.id)).status, 'PENDING');
-});
-
-test('a body changed after signing is 401 and changes nothing', async () => {
-  const p = await pending();
-  const signedFor = JSON.stringify(success(p, { amount: 1 }));
-  const { createHmac } = await import('node:crypto');
+test('a bad, missing or altered signature is 401 and changes nothing', async () => {
+  const { ticket, payment } = await pendingCard();
+  const body = success(payment.reference, ticket.feeKobo);
+  assert.equal((await postWebhook(t.url, body, { signature: 'a'.repeat(128) })).status, 401);
+  assert.equal((await postWebhook(t.url, body, { signature: null })).status, 401);
+  const signedFor = JSON.stringify(success(payment.reference, 1));
   const signature = createHmac('sha512', process.env.PAYSTACK_SECRET_KEY!).update(signedFor).digest('hex');
-  const res = await postWebhook(t.url, success(p), { signature });
-  assert.equal(res.status, 401);
-  assert.equal((await state(p.id)).status, 'PENDING');
+  assert.equal((await postWebhook(t.url, body, { signature })).status, 401);
+  const after = await rows(payment.id, ticket.id);
+  assert.equal(after.payment.status, 'PENDING');
+  assert.equal(after.ticket.paymentStatus, 'UNPAID');
 });
 
 test('a validly signed webhook for an unknown reference is 200 and changes nothing', async () => {
-  // Scoped to this site: other test files issue tickets at the same time.
-  const before = await t.prisma.ticket.count({ where: { siteId: t.siteId } });
-  const paymentsBefore = await t.prisma.payment.count({ where: { siteId: t.siteId, status: 'SUCCESS' } });
-  const res = await postWebhook(t.url, success({ reference: 'QRP_000000000000000000000000', amountKobo: 50_000 }));
+  const before = await t.prisma.payment.count({ where: { siteId: t.siteId, status: 'SUCCESS' } });
+  const res = await postWebhook(t.url, success('QRP_000000000000000000000000', 50_000));
   assert.equal(res.status, 200);
-  assert.equal(await t.prisma.ticket.count({ where: { siteId: t.siteId } }), before);
-  assert.equal(await t.prisma.payment.count({ where: { siteId: t.siteId, status: 'SUCCESS' } }), paymentsBefore);
+  assert.equal(await t.prisma.payment.count({ where: { siteId: t.siteId, status: 'SUCCESS' } }), before);
 });
 
 test('a validly signed event we do not act on is 200 and changes nothing', async () => {
-  const p = await pending();
-  const res = await postWebhook(t.url, { event: 'transfer.success', data: { reference: p.reference } });
-  assert.equal(res.status, 200);
-  assert.equal((await state(p.id)).status, 'PENDING');
+  const { ticket, payment } = await pendingCard();
+  assert.equal((await postWebhook(t.url, { event: 'transfer.success', data: { reference: payment.reference } })).status, 200);
+  assert.equal((await rows(payment.id, ticket.id)).payment.status, 'PENDING');
 });
 
-// ------------------------------------------------------- settle and issue
+// ------------------------------------------------------------ settle
 
-test('charge.success: SUCCESS, and the ticket in the same step: opaque token, number, validity from backend time', async () => {
-  const p = await pending();
+test('charge.success: payment SUCCESS and the ticket PAID through it, in one step; backend and Paystack times kept', async () => {
+  const { ticket, payment } = await pendingCard();
   const before = Date.now();
-  const res = await postWebhook(t.url, success(p));
-  assert.equal(res.status, 200);
-
-  const after = await state(p.id);
-  assert.equal(after.status, 'SUCCESS');
-  assert.ok(after.paidAt && after.paidAt.getTime() >= before - 1000, 'paid_at is not backend time');
-  assert.equal(after.paystackPaidAt?.toISOString(), '2026-11-06T09:58:01.000Z', "Paystack's own time not kept");
-
-  const ticket = after.ticket!;
-  assert.ok(ticket, 'no ticket after SUCCESS');
-  assert.match(ticket.token, TOKEN_PATTERN);
-  assert.ok(!ticket.token.includes(p.reference) && !ticket.token.includes(after.id), 'token is derived from ids');
-  assert.match(ticket.ticketNumber, TICKET_NUMBER_PATTERN);
-  assert.equal(ticket.paidAt.getTime(), after.paidAt!.getTime());
-  assert.equal(ticket.validityHours, 12);
-  assert.equal(ticket.validUntil.getTime(), after.paidAt!.getTime() + 12 * 3600_000);
-  assert.equal(ticket.amountKobo, 50_000);
-  assert.equal(ticket.categoryName, 'Car');
-  assert.equal(ticket.paymentReference, p.reference);
-  assert.equal(ticket.operatorId, t.users.entry.id);
-  assert.equal(ticket.gateId, t.entryGateId);
-  assert.equal(ticket.status, 'ACTIVE');
-
-  const poll = await getPayment(t, t.users.entry.id, p.id);
-  assert.equal(poll.body.ticket.token, ticket.token);
-  assert.equal(poll.body.ticket.ticketNumber, ticket.ticketNumber);
-  assert.deepEqual(poll.body.ticket.header, { displayName: 'Test Market', receiptOrgName: null, receiptContactLine: null });
+  assert.equal((await postWebhook(t.url, success(payment.reference, ticket.feeKobo))).status, 200);
+  const after = await rows(payment.id, ticket.id);
+  assert.equal(after.payment.status, 'SUCCESS');
+  assert.ok(after.payment.paidAt && after.payment.paidAt.getTime() >= before - 1000);
+  assert.equal(after.payment.paystackPaidAt?.toISOString(), '2026-11-06T09:58:01.000Z');
+  assert.equal(after.ticket.paymentStatus, 'PAID');
+  assert.equal(after.ticket.paidPaymentId, payment.id);
+  assert.equal(after.ticket.validationStatus, 'NOT_VALIDATED');
+  const stored = after.payment.paystackEvent as { authorization?: Record<string, unknown> };
+  assert.equal(stored.authorization?.authorization_code, undefined, 'the reusable card authorization was stored');
 });
 
-test('replay: the same webhook again is 200, and there is still exactly one ticket, unchanged', async () => {
-  const p = await pending();
-  await postWebhook(t.url, success(p));
-  const first = (await state(p.id)).ticket!;
-  const again = await postWebhook(t.url, success(p));
-  assert.equal(again.status, 200);
-  const tickets = await t.prisma.ticket.findMany({ where: { paymentId: p.id } });
-  assert.equal(tickets.length, 1);
-  assert.equal(tickets[0].token, first.token);
-  assert.equal(tickets[0].ticketNumber, first.ticketNumber);
-});
-
-test('replay at the same moment: five identical webhooks at once make one ticket', async () => {
-  const p = await pending();
-  const results = await Promise.all(Array.from({ length: 5 }, () => postWebhook(t.url, success(p))));
+test('replay: the same webhook again, and five at once, change nothing more', async () => {
+  const { ticket, payment } = await pendingCard();
+  await postWebhook(t.url, success(payment.reference, ticket.feeKobo));
+  const first = await rows(payment.id, ticket.id);
+  const results = await Promise.all(Array.from({ length: 5 }, () => postWebhook(t.url, success(payment.reference, ticket.feeKobo))));
   assert.deepEqual(results.map((r) => r.status), [200, 200, 200, 200, 200]);
-  assert.equal(await t.prisma.ticket.count({ where: { paymentId: p.id } }), 1);
+  const again = await rows(payment.id, ticket.id);
+  assert.equal(again.ticket.paidAt?.getTime(), first.ticket.paidAt?.getTime());
+  assert.equal(await t.prisma.payment.count({ where: { ticketId: ticket.id, status: 'SUCCESS' } }), 1);
 });
 
-test('validity hours are read when the ticket is issued, not when the payment started', async () => {
-  const p = await pending();
-  await t.prisma.siteSetting.update({ where: { siteId: t.siteId }, data: { validityHours: 2 } });
-  try {
-    await postWebhook(t.url, success(p));
-    const ticket = (await state(p.id)).ticket!;
-    assert.equal(ticket.validityHours, 2);
-    assert.equal(ticket.validUntil.getTime() - ticket.paidAt.getTime(), 2 * 3600_000);
-  } finally {
-    await t.prisma.siteSetting.update({ where: { siteId: t.siteId }, data: { validityHours: 12 } });
+test('five simultaneous first deliveries: one SUCCESS, the ticket PAID once', async () => {
+  const { ticket, payment } = await pendingCard();
+  const results = await Promise.all(Array.from({ length: 5 }, () => postWebhook(t.url, success(payment.reference, ticket.feeKobo))));
+  assert.deepEqual(results.map((r) => r.status), [200, 200, 200, 200, 200]);
+  assert.equal((await rows(payment.id, ticket.id)).ticket.paymentStatus, 'PAID');
+});
+
+// ---------------------------------------------- no PAID unless SUCCESS
+
+test('charge.failed: FAILED, the ticket stays UNPAID', async () => {
+  const { ticket, payment } = await pendingCard();
+  await postWebhook(t.url, { event: 'charge.failed', data: { reference: payment.reference, status: 'failed' } });
+  const after = await rows(payment.id, ticket.id);
+  assert.equal(after.payment.status, 'FAILED');
+  assert.equal(after.ticket.paymentStatus, 'UNPAID');
+});
+
+test("wrong amount or currency against the ticket's fee: no SUCCESS, the ticket stays UNPAID", async () => {
+  const { ticket, payment } = await pendingCard();
+  for (const overrides of [{ amount: ticket.feeKobo - 1 }, { amount: ticket.feeKobo / 100 }, { currency: 'USD' }, { amount: String(ticket.feeKobo) }]) {
+    assert.equal((await postWebhook(t.url, success(payment.reference, ticket.feeKobo, overrides))).status, 200);
+    const after = await rows(payment.id, ticket.id);
+    assert.equal(after.payment.status, 'PENDING', JSON.stringify(overrides));
+    assert.equal(after.ticket.paymentStatus, 'UNPAID');
   }
 });
 
-// ------------------------------------------- no ticket unless SUCCESS
-
-test('charge.failed: FAILED, no ticket', async () => {
-  const p = await pending();
-  const res = await postWebhook(t.url, { event: 'charge.failed', data: { reference: p.reference, status: 'failed' } });
-  assert.equal(res.status, 200);
-  const after = await state(p.id);
-  assert.equal(after.status, 'FAILED');
-  assert.equal(after.ticket, null);
-});
-
-test('wrong amount: no SUCCESS and no ticket', async () => {
-  const p = await pending();
-  for (const overrides of [{ amount: 49_999 }, { amount: 500 }, { currency: 'USD' }, { amount: '50000' }]) {
-    const res = await postWebhook(t.url, success(p, overrides));
-    assert.equal(res.status, 200);
-    const after = await state(p.id);
-    assert.equal(after.status, 'PENDING', `settled on ${JSON.stringify(overrides)}`);
-    assert.equal(after.ticket, null);
+test('late SUCCESS after ABANDONED or FAILED: accepted; the ticket PAID; a LATE_SUCCESS warning', async () => {
+  for (const status of ['ABANDONED', 'FAILED'] as const) {
+    const { ticket, payment } = await pendingCard();
+    await t.prisma.payment.update({ where: { id: payment.id }, data: { status } });
+    await postWebhook(t.url, success(payment.reference, ticket.feeKobo));
+    const after = await rows(payment.id, ticket.id);
+    assert.equal(after.payment.status, 'SUCCESS', status);
+    assert.equal(after.ticket.paymentStatus, 'PAID');
+    assert.ok(t.logs.some((l) => l.startsWith('WARN') && l.includes('LATE_SUCCESS') && l.includes(payment.reference)));
   }
 });
 
-test('late SUCCESS after FAILED: Paystack is the authority; SUCCESS and a ticket', async () => {
-  const p = await pending();
-  await postWebhook(t.url, { event: 'charge.failed', data: { reference: p.reference, status: 'failed' } });
-  await postWebhook(t.url, success(p));
-  const after = await state(p.id);
-  assert.equal(after.status, 'SUCCESS');
-  assert.ok(after.ticket);
+test('Q1: card SUCCESS for a ticket already PAID (cash) -> DUPLICATE, ticket untouched, ERROR DOUBLE_PAYMENT', async () => {
+  const { ticket, payment } = await pendingCard();
+  await t.prisma.payment.update({ where: { id: payment.id }, data: { status: 'ABANDONED' } });
+  const cashId = await payRaw(t, ticket, 'CASH');
+  const before = await t.prisma.ticket.findUniqueOrThrow({ where: { id: ticket.id } });
+  assert.equal((await postWebhook(t.url, success(payment.reference, ticket.feeKobo))).status, 200);
+  const after = await rows(payment.id, ticket.id);
+  assert.equal(after.payment.status, 'DUPLICATE');
+  assert.equal(after.payment.paystackPaidAt?.toISOString(), '2026-11-06T09:58:01.000Z', "Paystack's time not kept");
+  assert.ok(after.payment.paystackEvent, "Paystack's payload not kept");
+  assert.equal(after.payment.paidAt, null, 'a DUPLICATE is not revenue');
+  assert.deepEqual(after.ticket, before, 'the ticket changed');
+  assert.equal(after.ticket.paidPaymentId, cashId);
+  assert.ok(t.logs.some((l) => l.startsWith('ERROR') && l.includes('DOUBLE_PAYMENT') && l.includes(payment.reference)));
+
+  // A replay of it changes nothing either.
+  await postWebhook(t.url, success(payment.reference, ticket.feeKobo));
+  assert.equal((await rows(payment.id, ticket.id)).payment.status, 'DUPLICATE');
 });
 
-test('late SUCCESS after ABANDONED: SUCCESS, a ticket, and a warning logged', async () => {
-  const p = await pending();
-  await t.prisma.payment.update({ where: { id: p.id }, data: { status: 'ABANDONED' } });
-  await postWebhook(t.url, success(p));
-  const after = await state(p.id);
-  assert.equal(after.status, 'SUCCESS');
-  assert.ok(after.ticket);
-  assert.ok(
-    t.logs.some((l) => l.startsWith('WARN') && l.includes('LATE_SUCCESS') && l.includes(p.reference)),
-    'no late-success warning',
-  );
+test('Q2: card SUCCESS after the ticket expired -> SUCCESS, ticket PAID, still EXPIRED at exit; warning', async () => {
+  // A card payment started yesterday for yesterday's ticket, confirmed today.
+  const ticket = await makeTicket(t, { issuedAt: '2026-11-01T10:00:00Z' });
+  const ref = `QRP_${randomBytes(12).toString('hex')}`;
+  const p = await t.prisma.payment.create({
+    data: {
+      siteId: t.siteId, ticketId: ticket.id, amountKobo: ticket.feeKobo, method: 'CARD', reference: ref,
+      idempotencyKey: newKey(), operatorId: t.users.booth.id, gateId: t.boothGateId, deviceRef: 'd', status: 'ABANDONED',
+    },
+  });
+  assert.equal((await postWebhook(t.url, success(ref, ticket.feeKobo))).status, 200);
+  const after = await rows(p.id, ticket.id);
+  assert.equal(after.payment.status, 'SUCCESS');
+  assert.equal(after.ticket.paymentStatus, 'PAID');
+  assert.ok(after.ticket.validUntil.getTime() < Date.now(), 'the ticket is not expired');
+  assert.ok(t.logs.some((l) => l.startsWith('WARN') && l.includes('LATE_SUCCESS_EXPIRED') && l.includes(ref)));
+
+  const exit = await as(t, t.users.exit.id, 'POST', '/tickets/validate', { token: ticket.token });
+  assert.equal(exit.body.result, 'EXPIRED');
 });
 
 test('a SUCCESS payment never moves back to FAILED on a late charge.failed', async () => {
-  const p = await pending();
-  await postWebhook(t.url, success(p));
-  await postWebhook(t.url, { event: 'charge.failed', data: { reference: p.reference, status: 'failed' } });
-  assert.equal((await state(p.id)).status, 'SUCCESS');
-});
-
-// --------------------------------------------- ticket number collision
-
-test('a ticket-number collision is retried inside the transaction; the payment still settles', async () => {
-  const first = await pending();
-  await postWebhook(t.url, success(first));
-  const taken = (await state(first.id)).ticket!.ticketNumber;
-
-  const issuer = t.app.get(TicketIssuer);
-  const original = issuer.nextNumber;
-  const sequence = [taken, taken, 'ZZZZ-2345'];
-  issuer.nextNumber = () => sequence.shift() ?? original();
-  try {
-    const second = await pending();
-    const res = await postWebhook(t.url, success(second));
-    assert.equal(res.status, 200);
-    const after = await state(second.id);
-    assert.equal(after.status, 'SUCCESS', 'the collision aborted the settlement');
-    assert.equal(after.ticket?.ticketNumber, 'ZZZZ-2345');
-  } finally {
-    issuer.nextNumber = original;
-  }
+  const { ticket, payment } = await pendingCard();
+  await postWebhook(t.url, success(payment.reference, ticket.feeKobo));
+  await postWebhook(t.url, { event: 'charge.failed', data: { reference: payment.reference, status: 'failed' } });
+  assert.equal((await rows(payment.id, ticket.id)).payment.status, 'SUCCESS');
 });
 
 // -------------------------------------------------------------- logs
 
-test('no log line holds the token, card data, the checkout link, the access code or the payload', async () => {
-  const p = await pending();
-  await postWebhook(t.url, success(p));
-  const ticket = (await state(p.id)).ticket!;
+test('no log line holds a token, card data, the checkout link, the access code or the payload', async () => {
+  const { ticket, payment } = await pendingCard();
+  await postWebhook(t.url, success(payment.reference, ticket.feeKobo));
   const all = t.logs.join('\n');
-  assert.ok(t.logs.length > 0, 'nothing was captured, so this proves nothing');
-  for (const secret of [ticket.token, p.authorizationUrl, p.accessCode, '4081', '408408', 'AUTH_secret123', 'walkin@gsds.com.ng', '"amount"']) {
+  assert.ok(t.logs.length > 0);
+  for (const secret of [ticket.token, payment.authorizationUrl, payment.accessCode, '4081', '408408', 'AUTH_secret123', 'walkin@gsds.com.ng', '"amount"']) {
     assert.ok(!all.includes(secret), `a log line contains ${secret}`);
   }
 });

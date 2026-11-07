@@ -3,40 +3,35 @@ import { PrismaService } from '../prisma.service';
 import { SiteService } from '../site.service';
 import type { Actor } from '../auth/auth.guard';
 import { directionFor } from '../users/user-rules';
-import { assertGateAcceptsExit, assertGateInService } from '../config/gate-in-service';
+import { locationFor } from '../config/gate-in-service';
 import { TOKEN_PATTERN } from '../tickets/ticket-codes';
 import { ScanStore, type Inspected, type ScanRecord } from './scan-store';
 
 /**
- * Validate (close) and check (read) a scanned ticket. docs/api.md, "Scans".
+ * Validate (exit) and check (read) a scanned ticket. docs/api.md, "Scans".
  *
  * Order, for both:
- *   1. The operator's gate (in service, facing the right way). Refused: 400,
- *      nothing written. Not a scan.
+ *   1. The operator's location (in service, of the job's kind). Refused:
+ *      400, nothing written. Not a scan.
  *   2. The token's SHAPE, before any database lookup. Wrong shape:
  *      INVALID_QR, recorded with no ticket.
- *   3. Validate: ScanStore.consume, the one conditional UPDATE. If it changed
- *      nothing, ScanStore.inspect (a read) says why.
- *      Check: ScanStore.inspect only. Check never calls consume.
- *   4. The scan record, in the SAME transaction as the consume, so a closed
- *      ticket always has its record and a failed record leaves it ACTIVE.
+ *   3. Validate: ScanStore.consume, the one conditional UPDATE (PAID, not
+ *      validated, not expired). If it changed nothing, ScanStore.inspect (a
+ *      read) says why. Check: ScanStore.inspect only; never consume.
+ *   4. The scan record, in the SAME transaction as the consume, so a
+ *      validated ticket always has its record and a failed record leaves it
+ *      NOT_VALIDATED.
  *
- * Never VALID unless consume returned the ticket. If inspect then reads the
- * ticket as ACTIVE and still valid (which consume makes impossible), the
- * answer is 503 "cannot verify", not VALID.
+ * Why, in this order: VALIDATED -> ALREADY_USED; expired -> EXPIRED;
+ * UNPAID -> PAYMENT_REQUIRED; no ticket -> NOT_FOUND. A ticket that reads
+ * PAID, not validated and not expired after consume changed nothing is 503
+ * "cannot verify" at exit, never VALID.
  *
  * The scanned token is never logged, never echoed and never in an error.
  */
 
 type Result = ScanRecord['result'];
-
-const TICKET = (t: { ticketNumber: string; categoryName: string; customerName: string | null; paidAt: Date; validUntil: Date }) => ({
-  ticketNumber: t.ticketNumber,
-  categoryName: t.categoryName,
-  customerName: t.customerName,
-  paidAt: t.paidAt,
-  validUntil: t.validUntil,
-});
+type Base = Omit<ScanRecord, 'ticketId' | 'result'>;
 
 @Injectable()
 export class ScansService {
@@ -50,9 +45,9 @@ export class ScansService {
 
   async validate(actor: Actor, scanned: string, deviceRef: string) {
     const siteId = await this.site.getId();
-    const gate = await this.gateFor(actor, siteId, 'EXIT');
+    const gate = await locationFor(this.prisma, actor, siteId, 'EXIT');
     const token = scanned.trim();
-    const base = { siteId, kind: 'EXIT' as const, gateId: gate.id, operatorId: actor.id, deviceRef };
+    const base: Base = { siteId, kind: 'EXIT', gateId: gate.id, operatorId: actor.id, deviceRef };
 
     if (!TOKEN_PATTERN.test(token)) return this.recordOnly(base, 'INVALID_QR', gate.code);
 
@@ -61,12 +56,12 @@ export class ScansService {
         const closed = await this.store.consume(tx, { siteId, token, gateId: gate.id, operatorId: actor.id });
         if (closed) {
           const { occurredAt } = await this.store.record(tx, { ...base, ticketId: closed.ticketId, result: 'VALID' });
-          return { result: 'VALID' as const, scannedAt: occurredAt, ticket: TICKET(closed), ticketNumber: closed.ticketNumber };
+          const { ticketId: _id, usedAt: _at, ...ticket } = closed;
+          return { result: 'VALID' as const, scannedAt: occurredAt, ticket, ticketNumber: closed.ticketNumber };
         }
-
         const found = await this.store.inspect(tx, { siteId, token });
-        if (found && found.status === 'ACTIVE' && !found.expired) {
-          // consume should have closed it. Do not guess; never approve.
+        if (found && reason(found) === null) {
+          // consume should have validated it. Do not guess; never approve.
           throw new ServiceUnavailableException('Cannot verify this ticket. Try again; do not let the vehicle out.');
         }
         return this.refusal(tx, base, found, actor.id);
@@ -81,17 +76,19 @@ export class ScansService {
 
   async check(actor: Actor, scanned: string, deviceRef: string) {
     const siteId = await this.site.getId();
-    const gate = await this.gateFor(actor, siteId, directionFor(actor.role));
+    const kind = directionFor(actor.role);
+    if (!kind) throw new BadRequestException('This account has no operator job');
+    const gate = await locationFor(this.prisma, actor, siteId, kind);
     const token = scanned.trim();
-    const base = { siteId, kind: 'CHECK' as const, gateId: gate.id, operatorId: actor.id, deviceRef };
+    const base: Base = { siteId, kind: 'CHECK', gateId: gate.id, operatorId: actor.id, deviceRef };
 
     if (!TOKEN_PATTERN.test(token)) return this.recordOnly(base, 'INVALID_QR', gate.code);
 
     const answer = await this.prisma.$transaction(async (tx) => {
       const found = await this.store.inspect(tx, { siteId, token });
-      if (found && found.status === 'ACTIVE' && !found.expired) {
+      if (found && reason(found) === null) {
         const { occurredAt } = await this.store.record(tx, { ...base, ticketId: found.ticketId, result: 'ACTIVE' });
-        return { result: 'ACTIVE' as const, scannedAt: occurredAt, ticket: TICKET(found), ticketNumber: found.ticketNumber };
+        return { result: 'ACTIVE' as const, scannedAt: occurredAt, ticket: found.summary, ticketNumber: found.summary.ticketNumber };
       }
       return this.refusal(tx, base, found, actor.id);
     });
@@ -101,54 +98,41 @@ export class ScansService {
     return response;
   }
 
-  /** ALREADY_USED, EXPIRED or NOT_FOUND, recorded. */
-  private async refusal(
-    tx: Parameters<ScanStore['record']>[0],
-    base: Omit<ScanRecord, 'ticketId' | 'result'>,
-    found: Inspected | null,
-    actorId: string,
-  ) {
+  /** NOT_FOUND, ALREADY_USED, EXPIRED or PAYMENT_REQUIRED, recorded. */
+  private async refusal(tx: Parameters<ScanStore['record']>[0], base: Base, found: Inspected | null, actorId: string) {
     if (!found) {
       const { occurredAt } = await this.store.record(tx, { ...base, ticketId: null, result: 'NOT_FOUND' });
       return { result: 'NOT_FOUND' as const, scannedAt: occurredAt, ticketNumber: null };
     }
-    if (found.status === 'USED') {
-      const { occurredAt } = await this.store.record(tx, { ...base, ticketId: found.ticketId, result: 'ALREADY_USED' });
+    const result = reason(found)!;
+    const { occurredAt } = await this.store.record(tx, { ...base, ticketId: found.ticketId, result });
+    const common = { scannedAt: occurredAt, ticket: found.summary, ticketNumber: found.summary.ticketNumber };
+    if (result === 'ALREADY_USED') {
       return {
-        result: 'ALREADY_USED' as const,
-        scannedAt: occurredAt,
+        result,
+        ...common,
         usedAt: found.usedAt,
         usedGate: found.usedGate,
         usedBy: found.usedBy ? { name: found.usedBy.name, username: found.usedBy.username } : null,
         usedByYou: found.usedBy?.id === actorId,
-        ticket: TICKET(found),
-        ticketNumber: found.ticketNumber,
       };
     }
-    const { occurredAt } = await this.store.record(tx, { ...base, ticketId: found.ticketId, result: 'EXPIRED' });
-    return {
-      result: 'EXPIRED' as const,
-      scannedAt: occurredAt,
-      validUntil: found.validUntil,
-      ticket: TICKET(found),
-      ticketNumber: found.ticketNumber,
-    };
+    if (result === 'EXPIRED') return { result, ...common, validUntil: found.summary.validUntil };
+    return { result, ...common };
   }
 
-  private async recordOnly(base: Omit<ScanRecord, 'ticketId' | 'result'>, result: Result, gateCode: string) {
+  private async recordOnly(base: Base, result: Result, gateCode: string) {
     const { occurredAt } = await this.store.record(this.prisma, { ...base, ticketId: null, result });
     this.logger.log(`${base.kind} ${result} at ${gateCode} by ${base.operatorId}`);
     return { result, scannedAt: occurredAt };
   }
+}
 
-  /** The operator's gate: in service, and facing `direction`. Refused: 400, nothing written. */
-  private async gateFor(actor: Actor, siteId: string, direction: 'ENTRY' | 'EXIT' | null) {
-    const gate = actor.gateId ? await this.prisma.gate.findFirst({ where: { id: actor.gateId, siteId } }) : null;
-    assertGateInService(gate);
-    if (direction === 'EXIT') assertGateAcceptsExit(gate!);
-    else if (gate!.direction !== 'ENTRY') {
-      throw new BadRequestException(`Gate "${gate!.code}" is an exit gate; an entry operator checks at an entry gate.`);
-    }
-    return gate!;
-  }
+/** Why a found ticket cannot leave, in precedence order; null when it is paid, unused and valid today. */
+function reason(found: Inspected): 'ALREADY_USED' | 'EXPIRED' | 'PAYMENT_REQUIRED' | null {
+  const t = found.summary;
+  if (t.validationStatus === 'VALIDATED') return 'ALREADY_USED';
+  if (t.state === 'EXPIRED') return 'EXPIRED';
+  if (t.paymentStatus !== 'PAID') return 'PAYMENT_REQUIRED';
+  return null;
 }

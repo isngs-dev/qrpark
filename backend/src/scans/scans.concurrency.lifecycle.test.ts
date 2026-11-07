@@ -44,9 +44,9 @@ async function race(n: number) {
     assert.deepEqual(outcomes, expected, `round ${round} with ${n}: ${outcomes.join(', ')}`);
 
     const row = await t.prisma.ticket.findUniqueOrThrow({ where: { id: tk.id } });
-    assert.equal(row.status, 'USED');
+    assert.equal(row.validationStatus, 'VALIDATED');
     const winner = results.findIndex((r) => r.body.result === 'VALID');
-    assert.equal(row.usedById, operators[winner].id, `round ${round}: the ticket names someone other than the VALID caller`);
+    assert.equal(row.validatedById, operators[winner].id, `round ${round}: the ticket names someone other than the VALID caller`);
     for (const [i, r] of results.entries()) {
       if (i !== winner) assert.equal(r.body.usedByYou, false, `round ${round}: a loser was told it closed the ticket`);
     }
@@ -60,4 +60,23 @@ test(`two exit operators validate one ticket at the same moment: exactly one VAL
 
 test(`ten exit operators validate one ticket at the same moment: exactly one VALID, ${ROUNDS} rounds`, async () => {
   await race(10);
+});
+
+test(`an UNPAID ticket validated by ten exit operators at once: no VALID at all, ${ROUNDS} rounds`, async () => {
+  const tokens = await Promise.all(operators.map((o) => t.accessToken(o.id)));
+  for (let round = 1; round <= ROUNDS; round++) {
+    const tk = await issueTicket(t, { unpaid: true });
+    const results = await Promise.all(
+      operators.map((_o, i) =>
+        fetch(`${t.url}/tickets/validate`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${tokens[i]}`, 'x-device-id': `race-${i}` },
+          body: JSON.stringify({ token: tk.token }),
+        }).then(async (r) => `${r.status}:${((await r.json()) as { result: string }).result}`),
+      ),
+    );
+    assert.deepEqual([...new Set(results)], ['200:PAYMENT_REQUIRED'], `round ${round}: ${results.join(', ')}`);
+    const row = await t.prisma.ticket.findUniqueOrThrow({ where: { id: tk.id } });
+    assert.equal(row.validationStatus, 'NOT_VALIDATED');
+  }
 });

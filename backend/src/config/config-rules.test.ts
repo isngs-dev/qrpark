@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BadRequestException } from '@nestjs/common';
-import { assertCode, assertPriceKobo, assertValidityHours, cleanDisplayName, MAX_KOBO } from './config-rules';
+import { assertCode, assertPriceKobo, cleanDisplayName, MAX_KOBO } from './config-rules';
 
 /** Pure rules for configuration: no database, no HTTP. */
 
@@ -13,13 +13,6 @@ test('price: zero, negative, fractions, non-numbers and overflow are refused', (
   const bad: unknown[] = [0, -1, -50_000, 1.5, 0.1, Number.NaN, Infinity, MAX_KOBO + 1, '500', null, undefined, true, {}];
   for (const value of bad) {
     assert.throws(() => assertPriceKobo(value as number), BadRequestException, `accepted ${String(value)}`);
-  }
-});
-
-test('validity hours: 1-72 whole hours', () => {
-  for (const ok of [1, 12, 72]) assert.doesNotThrow(() => assertValidityHours(ok));
-  for (const bad of [0, 73, -1, 1.5, '12', null]) {
-    assert.throws(() => assertValidityHours(bad as number), BadRequestException, `accepted ${String(bad)}`);
   }
 });
 

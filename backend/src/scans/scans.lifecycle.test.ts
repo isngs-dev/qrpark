@@ -23,7 +23,7 @@ before(async () => {
 });
 after(() => t?.close());
 
-async function ticket(opts: { expired?: boolean } = {}) {
+async function ticket(opts: { expired?: boolean; unpaid?: boolean; validated?: boolean } = {}) {
   const row = await issueTicket(t, opts);
   seenTokens.push(row.token);
   return row;
@@ -35,24 +35,23 @@ async function lastScan() {
 
 // ------------------------------------------------------------------ VALID
 
-test('validate: VALID, the ticket is USED by this operator at this gate, on the database clock', async () => {
+test('validate: VALID, the ticket is VALIDATED by this operator at this gate, on the database clock', async () => {
   const tk = await ticket();
   const res = await scan(t, 'validate', t.users.exit.id, { token: tk.token });
   assert.equal(res.status, 200, JSON.stringify(res.body));
   assert.equal(res.body.result, 'VALID');
   assert.deepEqual(Object.keys(res.body).sort(), ['result', 'scannedAt', 'ticket']);
-  assert.deepEqual(res.body.ticket, {
-    ticketNumber: tk.ticketNumber,
-    categoryName: 'Car',
-    customerName: 'Ada Obi',
-    paidAt: tk.paidAt.toISOString(),
-    validUntil: tk.validUntil.toISOString(),
-  });
+  assert.equal(res.body.ticket.ticketNumber, tk.ticketNumber);
+  assert.equal(res.body.ticket.paymentStatus, 'PAID');
+  assert.equal(res.body.ticket.validationStatus, 'VALIDATED');
+  assert.equal(res.body.ticket.state, 'VALIDATED');
+  assert.equal(res.body.ticket.validUntil, tk.validUntil.toISOString());
+  assert.ok(!('token' in res.body.ticket));
 
   const after = await ticketRow(t, tk.id);
-  assert.equal(after.status, 'USED');
-  assert.equal(after.usedGateId, t.exitGateId);
-  assert.equal(after.usedById, t.users.exit.id);
+  assert.equal(after.validationStatus, 'VALIDATED');
+  assert.equal(after.validatedGateId, t.exitGateId);
+  assert.equal(after.validatedById, t.users.exit.id);
 
   const event = await lastScan();
   assert.equal(event.ticketId, tk.id);
@@ -62,7 +61,7 @@ test('validate: VALID, the ticket is USED by this operator at this gate, on the 
   assert.equal(event.operatorId, t.users.exit.id);
   assert.equal(event.deviceRef, DEVICE);
   // Same transaction, same now(): used_at and the scan time are one database instant.
-  assert.equal(after.usedAt!.getTime(), event.occurredAt.getTime(), 'used_at is not the database time of the scan');
+  assert.equal(after.validatedAt!.getTime(), event.occurredAt.getTime(), 'validated_at is not the database time of the scan');
   assert.equal(res.body.scannedAt, event.occurredAt.toISOString());
   assert.ok(!JSON.stringify(res.body).includes(tk.token), 'the token was echoed');
 });
@@ -78,7 +77,7 @@ test('validate twice: ALREADY_USED with when, which gate, which operator; usedBy
   assert.equal(mine.status, 200);
   assert.equal(mine.body.result, 'ALREADY_USED');
   const row = await ticketRow(t, tk.id);
-  assert.equal(mine.body.usedAt, row.usedAt!.toISOString());
+  assert.equal(mine.body.usedAt, row.validatedAt!.toISOString());
   assert.deepEqual(mine.body.usedGate, { code: 'EXIT_1', name: 'Exit 1' });
   assert.deepEqual(mine.body.usedBy, { name: t.users.exit.username, username: t.users.exit.username });
   assert.equal(mine.body.usedByYou, true, 'a retry after a lost reply must say the caller closed it');
@@ -138,7 +137,7 @@ test("a ticket from another site is NOT_FOUND here, and is not changed", async (
     seenTokens.push(foreign.token);
     const res = await scan(t, 'validate', t.users.exit.id, { token: foreign.token });
     assert.equal(res.body.result, 'NOT_FOUND');
-    assert.equal((await ticketRow(t, foreign.id)).status, 'ACTIVE');
+    assert.equal((await ticketRow(t, foreign.id)).validationStatus, 'NOT_VALIDATED');
   } finally {
     await other.close();
     process.env.SITE_CODE = t.siteCode;
@@ -247,7 +246,7 @@ test('validate needs an in-service EXIT gate; check needs the gate matching the 
   }
 
   assert.deepEqual(await siteCounts(t), counts, 'a refused request wrote something');
-  assert.equal((await ticketRow(t, tk.id)).status, 'ACTIVE');
+  assert.equal((await ticketRow(t, tk.id)).validationStatus, 'NOT_VALIDATED');
 });
 
 test('missing or invalid X-Device-Id: 400, nothing written, header value not echoed', async () => {
@@ -262,7 +261,7 @@ test('missing or invalid X-Device-Id: 400, nothing written, header value not ech
     if (device) assert.ok(!text.includes(device), 'the header value was echoed');
   }
   assert.deepEqual(await siteCounts(t), counts);
-  assert.equal((await ticketRow(t, tk.id)).status, 'ACTIVE');
+  assert.equal((await ticketRow(t, tk.id)).validationStatus, 'NOT_VALIDATED');
 });
 
 test('400 for a missing, non-string, oversized or unparseable token never echoes it', async () => {
@@ -292,12 +291,12 @@ test('400 for a missing, non-string, oversized or unparseable token never echoes
     }
   }
   assert.deepEqual(await siteCounts(t), counts, 'a 400 wrote something');
-  assert.equal((await ticketRow(t, tk.id)).status, 'ACTIVE');
+  assert.equal((await ticketRow(t, tk.id)).validationStatus, 'NOT_VALIDATED');
 });
 
 // ------------------------------------------- never VALID when unsure
 
-test('validate: consume changed nothing but the ticket reads ACTIVE and valid -> 503 cannot verify, never VALID', async () => {
+test('validate: consume changed nothing but the ticket reads PAID, not validated and valid -> 503 cannot verify, never VALID', async () => {
   const tk = await ticket();
   const original = store.consume;
   store.consume = async () => null;
@@ -309,10 +308,10 @@ test('validate: consume changed nothing but the ticket reads ACTIVE and valid ->
   } finally {
     store.consume = original;
   }
-  assert.equal((await ticketRow(t, tk.id)).status, 'ACTIVE');
+  assert.equal((await ticketRow(t, tk.id)).validationStatus, 'NOT_VALIDATED');
 });
 
-test('consume and the scan record are one transaction: a failed record leaves the ticket ACTIVE and answers 5xx', async () => {
+test('consume and the scan record are one transaction: a failed record leaves the ticket NOT_VALIDATED and answers 5xx', async () => {
   const tk = await ticket();
   const scansBefore = await t.prisma.scanEvent.count({ where: { siteId: t.siteId } });
   const original = store.record;
@@ -327,12 +326,88 @@ test('consume and the scan record are one transaction: a failed record leaves th
     store.record = original;
   }
   const row = await ticketRow(t, tk.id);
-  assert.equal(row.status, 'ACTIVE', 'the ticket was closed without a scan record');
-  assert.equal(row.usedAt, null);
+  assert.equal(row.validationStatus, 'NOT_VALIDATED', 'the ticket was closed without a scan record');
+  assert.equal(row.validatedAt, null);
   assert.equal(await t.prisma.scanEvent.count({ where: { siteId: t.siteId } }), scansBefore);
 
   // And it can still be validated afterwards.
   assert.equal((await scan(t, 'validate', t.users.exit.id, { token: tk.token })).body.result, 'VALID');
+});
+
+// ------------------------------------------------- the booth flow (Sprint R)
+
+test('validate: an UNPAID ticket is PAYMENT_REQUIRED and is not changed', async () => {
+  const tk = await ticket({ unpaid: true });
+  const before = await ticketRow(t, tk.id);
+  const res = await scan(t, 'validate', t.users.exit.id, { token: tk.token });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.result, 'PAYMENT_REQUIRED');
+  assert.equal(res.body.ticket.paymentStatus, 'UNPAID');
+  assert.ok(!JSON.stringify(res.body).includes(tk.token));
+  assert.deepEqual(await ticketRow(t, tk.id), before);
+  const event = await lastScan();
+  assert.equal(event.result, 'PAYMENT_REQUIRED');
+  assert.equal(event.ticketId, tk.id);
+});
+
+test('result order: VALIDATED beats expired, expired beats UNPAID', async () => {
+  // Validated, then its day ended: ALREADY_USED, not EXPIRED.
+  // Issued and paid on an earlier day, validated within that day (allowed:
+  // validated_at < valid_until), and scanned again today.
+  const usedThenOld = await ticket({ expired: true });
+  await t.prisma.$executeRawUnsafe(
+    `UPDATE ticket SET validation_status = 'VALIDATED', validated_at = issued_at + interval '1 hour',
+       validated_gate_id = $2::uuid, validated_by_id = $3::uuid WHERE id = $1::uuid`,
+    usedThenOld.id,
+    t.exitGateId,
+    t.users.exit.id,
+  );
+  assert.equal((await scan(t, 'validate', t.users.exit.id, { token: usedThenOld.token })).body.result, 'ALREADY_USED');
+
+  // Unpaid and from an earlier day: EXPIRED, not PAYMENT_REQUIRED.
+  const unpaidOld = await ticket({ unpaid: true, expired: true });
+  assert.equal((await scan(t, 'validate', t.users.exit.id, { token: unpaidOld.token })).body.result, 'EXPIRED');
+  assert.equal((await scan(t, 'check', t.users.booth.id, { token: unpaidOld.token })).body.result, 'EXPIRED');
+});
+
+test('check by each job at its own kind of location: entry, booth, exit; read-only for all three', async () => {
+  const unpaid = await ticket({ unpaid: true });
+  const paid = await ticket();
+  for (const [user, gate] of [[t.users.entry.id, t.entryGateId], [t.users.booth.id, t.boothGateId], [t.users.exit.id, t.exitGateId]] as const) {
+    const before = [await ticketRow(t, unpaid.id), await ticketRow(t, paid.id)];
+    const counts = await siteCounts(t);
+    const u = await scan(t, 'check', user, { token: unpaid.token });
+    const p = await scan(t, 'check', user, { token: paid.token });
+    assert.equal(u.body.result, 'PAYMENT_REQUIRED');
+    assert.equal(p.body.result, 'ACTIVE');
+    assert.equal(p.body.ticket.paymentMethod, 'CASH');
+    assert.ok(!JSON.stringify([u.body, p.body]).includes(unpaid.token) && !JSON.stringify([u.body, p.body]).includes(paid.token));
+    assert.deepEqual([await ticketRow(t, unpaid.id), await ticketRow(t, paid.id)], before, 'check changed a ticket');
+    assert.deepEqual(await siteCounts(t), { ...counts, scanEvent: counts.scanEvent + 2 });
+    assert.equal((await lastScan()).gateId, gate);
+  }
+});
+
+test('each job checks only at its own kind of location: anything else is 400 and writes nothing', async () => {
+  const tk = await ticket();
+  const counts = await siteCounts(t);
+  const cases: Array<[string, string]> = [
+    [t.users.entry.id, t.boothGateId],
+    [t.users.booth.id, t.exitGateId],
+    [t.users.exit.id, t.entryGateId],
+  ];
+  for (const [user, wrongGate] of cases) {
+    const original = (await t.prisma.appUser.findUniqueOrThrow({ where: { id: user } })).gateId!;
+    await t.prisma.$executeRawUnsafe(`UPDATE app_user SET gate_id = $1::uuid WHERE id = $2::uuid`, wrongGate, user);
+    try {
+      assert.equal((await scan(t, 'check', user, { token: tk.token })).status, 400);
+    } finally {
+      await t.prisma.$executeRawUnsafe(`UPDATE app_user SET gate_id = $1::uuid WHERE id = $2::uuid`, original, user);
+    }
+  }
+  assert.equal((await scan(t, 'validate', t.users.booth.id, { token: tk.token })).status, 403, 'a booth operator validated');
+  assert.equal((await scan(t, 'validate', t.users.entry.id, { token: tk.token })).status, 403, 'an entry operator validated');
+  assert.deepEqual(await siteCounts(t), counts);
 });
 
 // ------------------------------------------------------------------- logs

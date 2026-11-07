@@ -5,11 +5,11 @@ import { BadRequestException } from '@nestjs/common';
  * a database.
  *
  * Copied from eparking backend/src/config/config-rules.ts and adapted: a flat
- * price per category instead of pricing rules, validity hours instead of the
- * pass, buffer and debounce settings.
+ * price per category instead of pricing rules, and a payment window instead
+ * of the pass, buffer and debounce settings. There is no validity setting.
  *
  * The database holds the same lines (vehicle_category_price_kobo_check,
- * site_setting_validity_hours_check): these give a clear 400 first.
+ * site_setting_payment_window_minutes_check): these give a clear 400 first.
  */
 
 /** INTEGER's ceiling. A larger value cannot be stored. */
@@ -18,8 +18,6 @@ export const MAX_KOBO = 2_147_483_647;
 export const MIN_PAYMENT_WINDOW_MINUTES = 1;
 export const MAX_PAYMENT_WINDOW_MINUTES = 30;
 
-export const MIN_VALIDITY_HOURS = 1;
-export const MAX_VALIDITY_HOURS = 72;
 
 /** Long enough for any site's name; short enough to stay a header line or two. */
 export const DISPLAY_NAME_MAX_LENGTH = 100;
@@ -44,16 +42,6 @@ export function assertPriceKobo(value: number): void {
   }
   if (value < 1) throw new BadRequestException('priceKobo must be at least 1 kobo');
   if (value > MAX_KOBO) throw new BadRequestException(`priceKobo must be at most ${MAX_KOBO}`);
-}
-
-/** How long a ticket is valid after payment: whole hours, 1-72. */
-export function assertValidityHours(value: number): void {
-  if (typeof value !== 'number' || !Number.isInteger(value)) {
-    throw new BadRequestException('validityHours must be a whole number of hours');
-  }
-  if (value < MIN_VALIDITY_HOURS || value > MAX_VALIDITY_HOURS) {
-    throw new BadRequestException(`validityHours must be between ${MIN_VALIDITY_HOURS} and ${MAX_VALIDITY_HOURS}`);
-  }
 }
 
 /** How long a PENDING payment blocks its operator: whole minutes, 1-30. */

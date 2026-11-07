@@ -185,3 +185,114 @@ test('lockout race: two admins deactivating each other at the same moment leave 
   await t.prisma.appUser.update({ where: { id: t.users.admin.id }, data: { isActive: true } });
   admin = await t.accessToken(t.users.admin.id);
 });
+
+// ------------------------------------------------- payment operator (Sprint R)
+
+test('a payment operator is created at a BOOTH, and refused at an entry or exit gate', async () => {
+  const booth = await t.prisma.gate.create({ data: { siteId: t.siteId, code: 'BOOTH_U1', name: 'Booth U1', direction: 'BOOTH' } });
+  const ok = await post('/admin/users', { username: 'booth.ok', name: 'Booth', role: 'PAYMENT_OPERATOR', gateId: booth.id, password: password() });
+  assert.equal(ok.status, 201, JSON.stringify(ok.body));
+  assert.equal(ok.body.gate.direction, 'BOOTH');
+  for (const gateId of [t.entryGateId, t.exitGateId]) {
+    const res = await post('/admin/users', { username: `booth.bad${gateId.slice(0, 4)}`, name: 'B', role: 'PAYMENT_OPERATOR', gateId, password: password() });
+    assert.equal(res.status, 400);
+  }
+});
+
+// ------------------------------------------------------- soft delete
+
+test('delete: hidden, cannot sign in or refresh, sessions end at once, audited; history keeps the name', async () => {
+  const pw = password();
+  const made = await post('/admin/users', { username: 'leaver', name: 'Leaver Name', role: 'EXIT_OPERATOR', gateId: t.exitGateId, password: pw });
+  const signIn = await call(t, 'POST', '/auth/login', { body: { username: 'leaver', password: pw } });
+  assert.equal(signIn.status, 200);
+  // History: the leaver validated a ticket before going.
+  const { makeTicket } = await import('../test-support/tickets');
+  const tk = await makeTicket(t, { paid: 'CASH' });
+  await t.prisma.$executeRawUnsafe(
+    `UPDATE ticket SET validation_status = 'VALIDATED', validated_at = now(), validated_gate_id = $2::uuid, validated_by_id = $3::uuid WHERE id = $1::uuid`,
+    tk.id, t.exitGateId, made.body.id,
+  );
+
+  const del = await call(t, 'DELETE', `/admin/users/${made.body.id}`, { token: admin });
+  assert.equal(del.status, 200, JSON.stringify(del.body));
+  assert.deepEqual(del.body, { id: made.body.id, deleted: true });
+
+  const list = await call(t, 'GET', '/admin/users', { token: admin });
+  assert.ok(!list.body.some((u: { id: string }) => u.id === made.body.id), 'a deleted account is listed');
+  assert.equal((await call(t, 'GET', `/admin/users/${made.body.id}`, { token: admin })).status, 404);
+  assert.equal((await patch(`/admin/users/${made.body.id}`, { name: 'Back' })).status, 404);
+  assert.equal((await call(t, 'DELETE', `/admin/users/${made.body.id}`, { token: admin })).status, 404);
+
+  assert.equal((await call(t, 'POST', '/auth/login', { body: { username: 'leaver', password: pw } })).status, 401);
+  assert.equal((await call(t, 'POST', '/auth/refresh', { body: { refreshToken: signIn.body.refreshToken } })).status, 401);
+  assert.equal((await call(t, 'POST', '/auth/logout', { token: signIn.body.accessToken })).status, 401, 'the session survived');
+
+  const audit = await lastAudit(made.body.id);
+  assert.equal(audit?.action, 'USER_DELETED');
+  assert.deepEqual(audit?.detail, { username: 'leaver', role: 'EXIT_OPERATOR' });
+
+  const row = await t.prisma.appUser.findUniqueOrThrow({ where: { id: made.body.id } });
+  assert.equal(row.isActive, false);
+  assert.ok(row.deletedAt);
+  const check = await call(t, 'POST', '/tickets/check', {
+    token: await t.accessToken(t.users.exit.id), body: { token: tk.token }, headers: { 'x-device-id': 'd1' },
+  });
+  assert.equal(check.body.result, 'ALREADY_USED');
+  assert.equal(check.body.usedBy.name, 'Leaver Name', 'history lost the operator name');
+});
+
+test("delete: the username can be reused by a new account, which is the one that signs in", async () => {
+  const firstPw = password();
+  const first = await post('/admin/users', { username: 'reused', name: 'First', role: 'EXIT_OPERATOR', gateId: t.exitGateId, password: firstPw });
+  assert.equal((await call(t, 'DELETE', `/admin/users/${first.body.id}`, { token: admin })).status, 200);
+  const secondPw = password();
+  const second = await post('/admin/users', { username: 'reused', name: 'Second', role: 'EXIT_OPERATOR', gateId: t.exitGateId, password: secondPw });
+  assert.equal(second.status, 201, JSON.stringify(second.body));
+  assert.notEqual(second.body.id, first.body.id);
+  const signIn = await call(t, 'POST', '/auth/login', { body: { username: 'reused', password: secondPw } });
+  assert.equal(signIn.status, 200, 'the live account with a reused username cannot sign in');
+  assert.equal((await call(t, 'POST', '/auth/login', { body: { username: 'reused', password: firstPw } })).status, 401);
+  const dup = await post('/admin/users', { username: 'reused', name: 'Third', role: 'EXIT_OPERATOR', gateId: t.exitGateId, password: password() });
+  assert.equal(dup.status, 409, 'two live accounts share a username');
+});
+
+test('delete: nobody deletes themselves, nor the last active admin', async () => {
+  // Alone: refused (self, and the last admin).
+  assert.equal((await call(t, 'DELETE', `/admin/users/${t.users.admin.id}`, { token: admin })).status, 400);
+  // With a second active admin present: still refused, because it is self.
+  const second = await post('/admin/users', { username: 'second.admin', name: 'Second', role: 'ADMIN', password: password() });
+  assert.equal(second.status, 201);
+  const self = await call(t, 'DELETE', `/admin/users/${t.users.admin.id}`, { token: admin });
+  assert.equal(self.status, 400);
+  assert.match(self.body.message, /your own account/i);
+  assert.equal((await t.prisma.appUser.findUniqueOrThrow({ where: { id: t.users.admin.id } })).deletedAt, null);
+  assert.equal((await call(t, 'DELETE', `/admin/users/${second.body.id}`, { token: admin })).status, 200);
+});
+
+test('delete race: two admins deleting each other at the same moment leave one admin, never none (30 rounds)', async () => {
+  await t.prisma.appUser.updateMany({
+    where: { siteId: t.siteId, role: 'ADMIN', id: { not: t.users.admin.id } },
+    data: { isActive: false },
+  });
+  for (let round = 1; round <= 30; round++) {
+    const other = await post('/admin/users', { username: `del.race${round}`, name: 'Race', role: 'ADMIN', password: password() });
+    assert.equal(other.status, 201);
+    await t.prisma.appUser.update({ where: { id: t.users.admin.id }, data: { isActive: true, deletedAt: null } });
+    const [tokenA, tokenB] = [await t.accessToken(t.users.admin.id), await t.accessToken(other.body.id)];
+    const [a, b] = await Promise.all([
+      call(t, 'DELETE', `/admin/users/${other.body.id}`, { token: tokenA }),
+      call(t, 'DELETE', `/admin/users/${t.users.admin.id}`, { token: tokenB }),
+    ]);
+    const live = await t.prisma.appUser.count({ where: { siteId: t.siteId, role: 'ADMIN', isActive: true, deletedAt: null } });
+    assert.equal(live, 1, `round ${round}: ${live} admins left (statuses ${a.status}, ${b.status})`);
+    if (b.status === 200) {
+      // The fixture admin was deleted: bring it back for the next round (test only).
+      await t.prisma.$executeRawUnsafe(`UPDATE app_user SET deleted_at = NULL, is_active = true WHERE id = $1::uuid`, t.users.admin.id);
+      await t.prisma.appUser.update({ where: { id: other.body.id }, data: { isActive: false } });
+      // The delete ended its sessions: sign the fixture admin in afresh.
+      admin = await t.accessToken(t.users.admin.id);
+    }
+  }
+  admin = await t.accessToken(t.users.admin.id);
+});

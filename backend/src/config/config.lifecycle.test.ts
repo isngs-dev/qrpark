@@ -2,7 +2,6 @@ import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { bootTestApp, call, type TestApp } from '../test-support/app';
-import { fakeTicketNumber, fakeToken } from '../test-support/db';
 
 /**
  * Categories and prices, settings and gates over HTTP, as ADMIN. Every change
@@ -121,20 +120,11 @@ test('an unknown field is refused, not silently ignored', async () => {
 
 // ---------------------------------------------------------------- settings
 
-test('settings: read, then validity hours 1-72 only', async () => {
+test('settings: there is no validity setting (a ticket is valid on its day of issue)', async () => {
   const read = await get('/admin/settings');
   assert.equal(read.status, 200);
-  assert.equal(read.body.validityHours, 12);
-
-  for (const validityHours of [0, 73, 1.5, '12', null]) {
-    const res = await patch('/admin/settings', { validityHours });
-    assert.equal(res.status, 400, `validityHours ${String(validityHours)} answered ${res.status}`);
-  }
-  for (const validityHours of [72, 1, 12]) {
-    const res = await patch('/admin/settings', { validityHours });
-    assert.equal(res.status, 200);
-    assert.equal(res.body.validityHours, validityHours);
-  }
+  assert.equal('validityHours' in read.body, false);
+  assert.equal((await patch('/admin/settings', { validityHours: 12 })).status, 400, 'validityHours was accepted');
 });
 
 test('settings: payment window 1-30 minutes, editable and audited; Paystack mode is read-only', async () => {
@@ -169,53 +159,6 @@ test('settings: a change is audited with before and after, only for what changed
   assert.equal((await patch('/admin/settings', {})).status, 400);
 });
 
-test('settings: changing validity hours never changes a ticket already issued', async () => {
-  const category = await t.prisma.vehicleCategory.create({
-    data: { siteId: t.siteId, code: 'FIXED', name: 'Fixed', priceKobo: 10_000 },
-  });
-  const paidAt = new Date();
-  const payment = await t.prisma.payment.create({
-    data: {
-      siteId: t.siteId,
-      reference: `QRP-${randomBytes(8).toString('hex')}`,
-      idempotencyKey: randomBytes(16).toString('hex'),
-      operatorId: t.users.entry.id,
-      gateId: t.entryGateId,
-      categoryId: category.id,
-      categoryCode: 'FIXED',
-      categoryName: 'Fixed',
-      amountKobo: 10_000,
-      status: 'SUCCESS',
-      paidAt,
-    },
-  });
-  const validUntil = new Date(paidAt.getTime() + 12 * 3600_000);
-  const ticket = await t.prisma.ticket.create({
-    data: {
-      siteId: t.siteId,
-      paymentId: payment.id,
-      token: fakeToken(),
-      ticketNumber: fakeTicketNumber(),
-      operatorId: t.users.entry.id,
-      gateId: t.entryGateId,
-      categoryName: 'Fixed',
-      amountKobo: 10_000,
-      paymentReference: payment.reference,
-      paidAt,
-      validityHours: 12,
-      validUntil,
-    },
-  });
-
-  assert.equal((await patch('/admin/settings', { validityHours: 2 })).status, 200);
-
-  const after = await t.prisma.ticket.findUniqueOrThrow({ where: { id: ticket.id } });
-  assert.equal(after.validityHours, 12);
-  assert.equal(after.validUntil.getTime(), validUntil.getTime());
-});
-
-// ------------------------------------------------------------------- gates
-
 test('gates: create is audited; code and direction can never change', async () => {
   const created = await post('/admin/gates', { code: 'entry_2', name: 'Entry 2', direction: 'ENTRY' });
   assert.equal(created.status, 201);
@@ -228,6 +171,15 @@ test('gates: create is audited; code and direction can never change', async () =
   assert.equal((await patch(`/admin/gates/${created.body.id}`, { code: 'X' })).status, 400);
   assert.equal((await post('/admin/gates', { code: 'ENTRY_2', name: 'Dup', direction: 'ENTRY' })).status, 409);
   assert.equal((await post('/admin/gates', { code: 'G', name: 'Both', direction: 'BOTH' })).status, 400);
+});
+
+test('locations: a payment booth is created like a gate, kind BOOTH, audited', async () => {
+  const created = await post('/admin/gates', { code: 'booth_9', name: 'Booth 9', direction: 'BOOTH' });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  assert.equal(created.body.direction, 'BOOTH');
+  const audit = await lastAudit(created.body.id);
+  assert.deepEqual(audit?.detail, { code: 'BOOTH_9', name: 'Booth 9', direction: 'BOOTH' });
+  assert.equal((await patch(`/admin/gates/${created.body.id}`, { direction: 'ENTRY' })).status, 400, 'a kind changed');
 });
 
 test('gates: rename and take out of service are audited as GATE_UPDATED', async () => {

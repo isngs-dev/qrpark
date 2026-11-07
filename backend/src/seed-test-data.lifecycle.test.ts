@@ -33,12 +33,11 @@ async function seededSite() {
   return { code, adminPassword, lines: out.lines };
 }
 
-test('seed-site: site, settings (validity 12) and admin; a second run changes nothing', async () => {
+test('seed-site: site, settings and admin; a second run changes nothing', async () => {
   const { code, adminPassword, lines } = await seededSite();
   assert.ok(!lines.join('\n').includes(adminPassword), 'seed-site printed the admin password');
 
   const site = await prisma.site.findUniqueOrThrow({ where: { code }, include: { setting: true, users: true } });
-  assert.equal(site.setting?.validityHours, 12);
   assert.equal(site.setting?.displayName, 'Seed Test');
   assert.deepEqual(site.users.map((u) => `${u.username}:${u.role}:${u.gateId}`), ['admin:ADMIN:null']);
 
@@ -76,7 +75,7 @@ test('seed-test-data: first run creates everything, audited; second run keeps ev
   const first = capture();
   const outcome = await seedTestData({ prisma, siteCode: code, print: first.print });
 
-  assert.equal(outcome.created.length, 10, first.lines.join('\n')); // 2 gates + 6 categories + 2 accounts
+  assert.equal(outcome.created.length, 13, first.lines.join('\n')); // 4 locations + 6 categories + 3 accounts
   assert.equal(outcome.kept.length, 0);
 
   const site = await prisma.site.findUniqueOrThrow({ where: { code } });
@@ -91,15 +90,16 @@ test('seed-test-data: first run creates everything, audited; second run keeps ev
     orderBy: { username: 'asc' },
   });
   assert.deepEqual(operators.map((u) => `${u.username}:${u.role}:${u.gate?.code}`), [
+    'booth-1:PAYMENT_OPERATOR:BOOTH_1',
     'entry-1:ENTRY_OPERATOR:ENTRY_1',
     'exit-1:EXIT_OPERATOR:EXIT_1',
   ]);
 
   // Passwords: printed once, each stored only as its hash, and none in the audit.
   const printed = first.lines.filter((l) => l.includes('password: '));
-  assert.equal(printed.length, 2);
+  assert.equal(printed.length, 3);
   const audit = await prisma.auditLog.findMany({ where: { siteId: site.id } });
-  assert.equal(audit.length, 10);
+  assert.equal(audit.length, 13);
   for (const line of printed) {
     const pw = line.split('password: ')[1];
     assert.ok(!JSON.stringify(audit).includes(pw), 'a password reached the audit log');
@@ -109,9 +109,9 @@ test('seed-test-data: first run creates everything, audited; second run keeps ev
   const second = capture();
   const again = await seedTestData({ prisma, siteCode: code, print: second.print });
   assert.equal(again.created.length, 0, second.lines.join('\n'));
-  assert.equal(again.kept.length, 10);
+  assert.equal(again.kept.length, 13);
   assert.ok(!second.lines.some((l) => l.includes('password: ')), 'a re-run printed a password');
-  assert.equal(await prisma.auditLog.count({ where: { siteId: site.id } }), 10, 're-run wrote audit rows');
+  assert.equal(await prisma.auditLog.count({ where: { siteId: site.id } }), 13, 're-run wrote audit rows');
 });
 
 test('seed-test-data: a price changed in the portal is kept by a re-run', async () => {

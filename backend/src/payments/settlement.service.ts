@@ -4,22 +4,23 @@ import { PrismaService } from '../prisma.service';
 import { SiteService } from '../site.service';
 import { PaystackGateway } from '../paystack/paystack.gateway';
 import { amountMatches, paystackPaidAt, windowExpired } from '../paystack/verdicts';
-import { TicketIssuer } from '../tickets/ticket-issuer';
 
 /**
- * Everything that moves a payment out of PENDING, and the only place a
- * ticket is issued. Every move is Paystack's answer, from a signed webhook or
- * a verify call; the payment window only decides what an unpaid answer means.
+ * Everything that moves a CARD payment out of PENDING, and the only place a
+ * card payment marks its ticket PAID. Every move is Paystack's answer, from a
+ * signed webhook or a verify call; the payment window only decides what an
+ * unpaid answer means.
  *
  * Adapted from eparking backend/src/paystack/paystack.service.ts: no
- * UNRESOLVED status (an unknown outcome stays PENDING here), no double-charge
- * path, and the ticket issued in the same transaction as SUCCESS.
+ * UNRESOLVED status (an unknown outcome stays PENDING here); since Sprint R
+ * the ticket already exists and SUCCESS marks it PAID in the same
+ * transaction.
  *
  * Log lines carry the reference and a reason only: never the payload, card
  * data, the checkout link, the access code or a token.
  */
 
-export type SettleResult = 'settled' | 'already' | 'unknown-reference' | 'amount-mismatch';
+export type SettleResult = 'settled' | 'duplicate' | 'already' | 'unknown-reference' | 'amount-mismatch';
 
 /** What is kept of Paystack's payload. The reusable card authorization code is dropped. */
 function storable(payload: Record<string, unknown>): Prisma.InputJsonValue {
@@ -37,56 +38,82 @@ export class SettlementService {
     private readonly prisma: PrismaService,
     private readonly site: SiteService,
     private readonly gateway: PaystackGateway,
-    private readonly issuer: TicketIssuer,
   ) {}
 
   /**
    * Paystack says the charge succeeded. Idempotent, keyed on our reference.
    *
-   * The payment row is locked FOR UPDATE, so two deliveries at the same
-   * moment are serialised: the second sees SUCCESS and does nothing. The
-   * SUCCESS update and the ticket insert commit together or not at all.
+   * Lock order, the same as the booth: the TICKET row FOR UPDATE first, then
+   * the payment row. Cash and this path for one ticket therefore serialise;
+   * two deliveries at the same moment too (the second sees SUCCESS or
+   * DUPLICATE and does nothing).
    *
-   * A late SUCCESS (the payment was ABANDONED or FAILED) is accepted:
-   * Paystack is the authority and the customer has paid.
+   *   ticket UNPAID            payment SUCCESS, ticket PAID through it
+   *   ticket already PAID      payment DUPLICATE (Q1): Paystack's time and
+   *                            payload kept, no paid_at, the ticket untouched,
+   *                            ERROR DOUBLE_PAYMENT (refund in Paystack)
+   *   ticket expired           SUCCESS and PAID all the same (Q2): it stays
+   *                            EXPIRED at exit; WARN LATE_SUCCESS_EXPIRED
+   *   payment was ABANDONED    accepted (Paystack is the authority);
+   *   or FAILED                WARN LATE_SUCCESS
    */
   async settleSuccess(reference: string, data: Record<string, unknown>, source: 'webhook' | 'verify'): Promise<SettleResult> {
     const siteId = await this.site.getId();
     return this.prisma.$transaction(
       async (tx) => {
-        const rows = await tx.$queryRaw<Array<{ id: string; status: string }>>`
-          SELECT id::text, status::text FROM payment
-          WHERE reference = ${reference} AND site_id = ${siteId}::uuid
-          FOR UPDATE`;
-        if (rows.length === 0) {
+        const found = await tx.payment.findFirst({ where: { siteId, reference }, select: { id: true, ticketId: true } });
+        if (!found) {
           this.logger.warn(`Paystack SUCCESS for unknown reference ${reference} via ${source}; ignored`);
           return 'unknown-reference';
         }
-        const { id, status } = rows[0];
-        if (status === 'SUCCESS') return 'already';
+        const [ticket] = await tx.$queryRaw<Array<{ payment_status: string; ticket_number: string; expired: boolean; db_now: Date }>>`
+          SELECT payment_status::text AS payment_status, ticket_number, (now() >= valid_until) AS expired, now() AS db_now
+            FROM ticket WHERE id = ${found.ticketId}::uuid FOR UPDATE`;
+        const [{ status }] = await tx.$queryRaw<Array<{ status: string }>>`
+          SELECT status::text AS status FROM payment WHERE id = ${found.id}::uuid FOR UPDATE`;
+        if (status === 'SUCCESS' || status === 'DUPLICATE') return 'already';
 
-        const payment = await tx.payment.findUniqueOrThrow({ where: { id } });
+        const payment = await tx.payment.findUniqueOrThrow({ where: { id: found.id } });
+        if (payment.method !== 'CARD') return 'already';
         if (!amountMatches(payment, data)) {
           this.logger.error(
             `AMOUNT_MISMATCH for ${reference} via ${source}: Paystack's amount or currency is not ` +
-              `${payment.amountKobo} kobo NGN. Not settled; no ticket issued.`,
+              `${payment.amountKobo} kobo NGN. Not settled; the ticket is not paid.`,
           );
           return 'amount-mismatch';
         }
-        if (status !== 'PENDING') {
-          this.logger.warn(
-            `LATE_SUCCESS for ${reference} via ${source}: Paystack confirmed a payment marked ${status}. ` +
-              'Ticket issued. If the customer also paid a second time, refund one in the Paystack dashboard.',
+
+        if (ticket.payment_status === 'PAID') {
+          await tx.payment.update({
+            where: { id: payment.id },
+            data: { status: 'DUPLICATE', paystackPaidAt: paystackPaidAt(data), paystackEvent: storable(data) },
+          });
+          this.logger.error(
+            `DOUBLE_PAYMENT for ${reference} via ${source}: Paystack confirmed a payment for ticket ` +
+              `${ticket.ticket_number}, which was already paid. Recorded as DUPLICATE; refund it in the Paystack dashboard.`,
           );
+          return 'duplicate';
         }
 
-        const paidAt = new Date();
         await tx.payment.update({
-          where: { id },
-          data: { status: 'SUCCESS', paidAt, paystackPaidAt: paystackPaidAt(data), paystackEvent: storable(data) },
+          where: { id: payment.id },
+          data: { status: 'SUCCESS', paidAt: ticket.db_now, paystackPaidAt: paystackPaidAt(data), paystackEvent: storable(data) },
         });
-        const ticket = await this.issuer.issue(tx, payment, paidAt);
-        this.logger.log(`Payment ${reference} SUCCESS via ${source}; ticket ${ticket.ticketNumber} issued`);
+        await tx.ticket.update({
+          where: { id: found.ticketId },
+          data: { paymentStatus: 'PAID', paidPaymentId: payment.id, paidAt: ticket.db_now },
+        });
+        if (ticket.expired) {
+          this.logger.warn(
+            `LATE_SUCCESS_EXPIRED for ${reference} via ${source}: ticket ${ticket.ticket_number} had expired. ` +
+              'Recorded and marked PAID; it stays EXPIRED and cannot exit. Nothing is refunded in the app.',
+          );
+        } else if (status !== 'PENDING') {
+          this.logger.warn(
+            `LATE_SUCCESS for ${reference} via ${source}: Paystack confirmed a payment marked ${status}. Ticket PAID.`,
+          );
+        }
+        this.logger.log(`Payment ${reference} SUCCESS via ${source}; ticket ${ticket.ticket_number} PAID`);
         return 'settled';
       },
       { timeout: 20_000 },

@@ -6,9 +6,7 @@ import { ConfigService } from './config.service';
 import {
   MAX_KOBO,
   MAX_PAYMENT_WINDOW_MINUTES,
-  MAX_VALIDITY_HOURS,
   MIN_PAYMENT_WINDOW_MINUTES,
-  MIN_VALIDITY_HOURS,
 } from './config-rules';
 
 /**
@@ -51,9 +49,6 @@ class UpdateSettingsDto {
   @present('displayName') @IsString() @MaxLength(200)
   displayName?: string;
 
-  @present('validityHours') @IsInt() @Min(MIN_VALIDITY_HOURS) @Max(MAX_VALIDITY_HOURS)
-  validityHours?: number;
-
   @present('paymentWindowMinutes') @IsInt() @Min(MIN_PAYMENT_WINDOW_MINUTES) @Max(MAX_PAYMENT_WINDOW_MINUTES)
   paymentWindowMinutes?: number;
 
@@ -74,7 +69,7 @@ class CreateGateDto {
   @IsString() @MaxLength(100)
   name!: string;
 
-  @IsIn(['ENTRY', 'EXIT'])
+  @IsIn(['ENTRY', 'BOOTH', 'EXIT'])
   direction!: GateDirection;
 }
 

@@ -6,13 +6,17 @@
 //   * All money is integer kobo. Never Float, never Decimal naira.
 //   * The QR token is opaque random text, never an id, never sequential, and
 //     is stored nowhere but ticket.token.
-//   * Timestamps are set by the backend, UTC, TIMESTAMPTZ.
+//   * Timestamps are set by the backend or the database, UTC, TIMESTAMPTZ.
 //   * Columns are snake_case in the database, camelCase here (@map).
 //
+// The flow (0003): entry creates an UNPAID ticket; a payment booth takes cash
+// or card; exit requires PAID. The ticket no longer depends on a payment; each
+// payment points at its ticket.
+//
 // Prisma schema syntax cannot express the CHECK constraints, the partial
-// unique index (one PENDING payment per operator) or the two triggers
-// (ticket only for a SUCCESS payment; audit_log append-only).
-// They are raw SQL at the end of migrations/0001_init/migration.sql.
+// unique indexes, lagos_day_end() or the triggers (ticket insert and guard,
+// payment guard, audit_log append-only). They are raw SQL in the migrations
+// (0001_init, 0003_booth_flow); see docs/schema.md.
 
 generator client {
   provider = "prisma-client-js"
@@ -31,43 +35,62 @@ enum UserRole {
   ADMIN
   ENTRY_OPERATOR
   EXIT_OPERATOR
+  PAYMENT_OPERATOR
 
   @@map("user_role")
 }
 
+// The kind of location. The table keeps its name, gate; BOOTH is a payment booth.
 enum GateDirection {
   ENTRY
   EXIT
+  BOOTH
 
   @@map("gate_direction")
 }
 
+enum PaymentMethod {
+  CASH
+  CARD
+
+  @@map("payment_method")
+}
+
 enum PaymentStatus {
   PENDING
-  SUCCESS // set only when Paystack confirms (webhook or verify)
+  SUCCESS // card: Paystack confirmed; cash: recorded at the booth
   FAILED
   ABANDONED
+  // Paystack confirmed a card payment for a ticket already PAID: the customer
+  // paid twice. Terminal; not revenue; refunded in the Paystack dashboard.
+  DUPLICATE
 
   @@map("payment_status")
 }
 
-// EXPIRED is not stored: it is derived (status ACTIVE and now > valid_until).
-enum TicketStatus {
-  ACTIVE
-  USED
+enum TicketPaymentStatus {
+  UNPAID
+  PAID
 
-  @@map("ticket_status")
+  @@map("ticket_payment_status")
+}
+
+// EXPIRED is not stored: it is derived (not validated and now() >= valid_until).
+enum TicketValidationStatus {
+  NOT_VALIDATED
+  VALIDATED
+
+  @@map("ticket_validation_status")
 }
 
 enum ScanKind {
-  CHECK // read-only, either operator role
+  CHECK // read-only, any operator job
   EXIT // the single-use validation
 
   @@map("scan_kind")
 }
 
-// ACTIVE only for CHECK, VALID only for EXIT (CHECK constraint in 0001_init).
-// PAYMENT_NOT_COMPLETED is left out until the terminal flow needs it.
+// ACTIVE only for CHECK, VALID only for EXIT (scan_event_result_by_kind_check).
 enum ScanResult {
   VALID
   ACTIVE
@@ -75,6 +98,7 @@ enum ScanResult {
   EXPIRED
   INVALID_QR
   NOT_FOUND
+  PAYMENT_REQUIRED
 
   @@map("scan_result")
 }
@@ -90,6 +114,8 @@ enum AuditAction {
   USER_UPDATED // name, role, gate or active flag
   USER_PASSWORD_RESET
   TICKET_REPRINTED
+  USER_DELETED
+  PAYMENT_CASH_CONFIRMED
 
   @@map("audit_action")
 }
@@ -122,14 +148,11 @@ model SiteSetting {
 
   displayName String @map("display_name")
 
-  // Stored on each ticket at issue time; changing it never changes a ticket
-  // already issued. 1-72.
-  validityHours Int @map("validity_hours")
-
-  // How long a PENDING payment blocks its operator before it is ABANDONED
-  // (unless Paystack confirms it first). 1-30 minutes.
+  // How long a PENDING card payment blocks its operator before it is
+  // ABANDONED (unless Paystack confirms it first). 1-30 minutes.
   paymentWindowMinutes Int @default(5) @map("payment_window_minutes")
 
+  // Printed on the ticket: the brand line, and the line beneath it.
   receiptOrgName     String? @map("receipt_org_name")
   receiptContactLine String? @map("receipt_contact_line")
 
@@ -139,27 +162,28 @@ model SiteSetting {
 }
 
 // ---------------------------------------------------------------------------
-// Gates and users
+// Locations and users
 // ---------------------------------------------------------------------------
 
+// A location: an entry gate, a payment booth or an exit gate.
 model Gate {
   id     String @id @default(uuid()) @db.Uuid
   siteId String @map("site_id") @db.Uuid
   site   Site   @relation(fields: [siteId], references: [id], onDelete: Restrict)
 
-  code      String // stable key, e.g. "ENTRY_1"; never changes
+  code      String // stable key, e.g. "ENTRY_1", "BOOTH_1"; never changes
   name      String
-  direction GateDirection // never changes: operators are assigned by it
+  direction GateDirection // the kind; never changes: operators are assigned by it
   isActive  Boolean       @default(true) @map("is_active")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  users        AppUser[]
-  payments     Payment[]
-  entryTickets Ticket[]    @relation("TicketEntryGate")
-  exitTickets  Ticket[]    @relation("TicketUsedGate")
-  scanEvents   ScanEvent[]
+  users            AppUser[]
+  payments         Payment[]
+  entryTickets     Ticket[]    @relation("TicketEntryGate")
+  validatedTickets Ticket[]    @relation("TicketValidatedGate")
+  scanEvents       ScanEvent[]
 
   @@unique([siteId, code])
   @@map("gate")
@@ -170,32 +194,39 @@ model AppUser {
   siteId String @map("site_id") @db.Uuid
   site   Site   @relation(fields: [siteId], references: [id], onDelete: Restrict)
 
-  username     String // lower-case, 3-32 of a-z 0-9 . _ -
+  // lower-case, 3-32 of a-z 0-9 . _ -; unique per site among LIVE accounts
+  // only (app_user_live_username_key, a partial index in 0003), so a deleted
+  // account's username can be reused.
+  username     String
   name         String
   passwordHash String   @map("password_hash") // Argon2id. Never returned, never logged.
   role         UserRole
 
-  // Null for ADMIN, required for an operator (CHECK in 0001_init). An entry
-  // operator's gate faces ENTRY, an exit operator's EXIT (enforced in code).
+  // Null for ADMIN, required for an operator (app_user_gate_by_role_check).
+  // The location's kind matches the job (enforced in code).
   gateId String? @map("gate_id") @db.Uuid
   gate   Gate?   @relation(fields: [gateId], references: [id], onDelete: Restrict)
 
-  // Raised by logout, deactivation, a role or gate change, and a password
-  // reset. A token carrying an older value is refused on the next request.
+  // Raised by logout, deactivation, deletion, a role or gate change, and a
+  // password reset. A token carrying an older value is refused.
   tokenVersion Int @default(0) @map("token_version")
 
   isActive Boolean @default(true) @map("is_active")
+
+  // Soft delete: hidden, cannot sign in; history kept. A deleted account is
+  // inactive (app_user_deleted_is_inactive_check).
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   payments   Payment[]
   issued     Ticket[]    @relation("TicketOperator")
-  validated  Ticket[]    @relation("TicketUsedBy")
+  validated  Ticket[]    @relation("TicketValidatedBy")
   scanEvents ScanEvent[]
   auditLogs  AuditLog[]
 
-  @@unique([siteId, username])
+  @@index([siteId, username])
   @@map("app_user")
 }
 
@@ -203,8 +234,8 @@ model AppUser {
 // Vehicle categories: a flat price each
 // ---------------------------------------------------------------------------
 
-// Deactivate rather than delete: payments and tickets keep their snapshot,
-// and the category row must stay explicable.
+// Deactivate rather than delete: tickets keep their snapshot, and the
+// category row must stay explicable.
 model VehicleCategory {
   id     String @id @default(uuid()) @db.Uuid
   siteId String @map("site_id") @db.Uuid
@@ -218,114 +249,132 @@ model VehicleCategory {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  payments Payment[]
+  tickets Ticket[]
 
   @@unique([siteId, code])
   @@map("vehicle_category")
 }
 
 // ---------------------------------------------------------------------------
-// Payment and ticket (used from Sprint 2)
+// Ticket and payment
 // ---------------------------------------------------------------------------
+
+// Created at entry, UNPAID. Becomes PAID only by pointing at a SUCCESS
+// payment of its own (ticket_paid_payment_id_id_fkey + ticket_guard), and
+// VALIDATED only when PAID. Token, number, fee, category, issue time,
+// valid_until and idempotency key never change (ticket_guard).
+model Ticket {
+  id     String @id @default(uuid()) @db.Uuid
+  siteId String @map("site_id") @db.Uuid
+  site   Site   @relation(fields: [siteId], references: [id], onDelete: Restrict)
+
+  // From the entry app, one per entry attempt: a repeated tap returns this ticket.
+  idempotencyKey String @unique @map("idempotency_key")
+
+  // The QR. 32 random bytes as base64url (43 characters). Stored nowhere else.
+  token        String @unique
+  ticketNumber String @map("ticket_number") // XXXX-XXXX; not a credential
+
+  // Entry: who, where, which device.
+  operatorId String  @map("operator_id") @db.Uuid
+  operator   AppUser @relation("TicketOperator", fields: [operatorId], references: [id], onDelete: Restrict)
+  gateId     String  @map("gate_id") @db.Uuid
+  gate       Gate    @relation("TicketEntryGate", fields: [gateId], references: [id], onDelete: Restrict)
+  deviceRef  String  @map("device_ref")
+
+  // The category and its price at creation: the fee snapshot.
+  categoryId   String          @map("category_id") @db.Uuid
+  category     VehicleCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  categoryCode String          @map("category_code")
+  categoryName String          @map("category_name")
+  feeKobo      Int             @map("fee_kobo")
+
+  // Set by the database: issued_at defaults to now(); valid_until is always
+  // lagos_day_end(issued_at), whatever an insert says (ticket_insert_guard).
+  issuedAt   DateTime @default(now()) @map("issued_at") @db.Timestamptz(6)
+  validUntil DateTime @default(dbgenerated("lagos_day_end(now())")) @map("valid_until") @db.Timestamptz(6)
+
+  paymentStatus TicketPaymentStatus @default(UNPAID) @map("payment_status")
+  // The SUCCESS payment that made it PAID; a payment of THIS ticket
+  // (composite key with id). Set once, with paid_at.
+  paidPaymentId String?             @unique @map("paid_payment_id") @db.Uuid
+  paidPayment   Payment?            @relation("TicketPaidPayment", fields: [paidPaymentId, id], references: [id, ticketId], onDelete: Restrict, onUpdate: Restrict)
+  paidAt        DateTime?           @map("paid_at") @db.Timestamptz(6)
+
+  validationStatus TicketValidationStatus @default(NOT_VALIDATED) @map("validation_status")
+  validatedAt      DateTime?              @map("validated_at") @db.Timestamptz(6)
+  validatedGateId  String?                @map("validated_gate_id") @db.Uuid
+  validatedGate    Gate?                  @relation("TicketValidatedGate", fields: [validatedGateId], references: [id], onDelete: Restrict)
+  validatedById    String?                @map("validated_by_id") @db.Uuid
+  validatedBy      AppUser?               @relation("TicketValidatedBy", fields: [validatedById], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  payments   Payment[]   @relation("TicketPayments")
+  scanEvents ScanEvent[]
+
+  // Target of the payment's composite key: a payment's amount must equal
+  // its ticket's fee snapshot.
+  @@unique([id, feeKobo])
+  @@unique([siteId, ticketNumber])
+  @@index([siteId, issuedAt])
+  @@index([siteId, paymentStatus, validationStatus, validUntil])
+  @@map("ticket")
+}
 
 model Payment {
   id     String @id @default(uuid()) @db.Uuid
   siteId String @map("site_id") @db.Uuid
   site   Site   @relation(fields: [siteId], references: [id], onDelete: Restrict)
 
-  // Our own reference, also used as Paystack's. The webhook idempotency key.
+  // The ticket paid for, and its fee: (ticket_id, amount_kobo) must match
+  // ticket (id, fee_kobo).
+  ticketId   String @map("ticket_id") @db.Uuid
+  amountKobo Int    @map("amount_kobo")
+  ticket     Ticket @relation("TicketPayments", fields: [ticketId, amountKobo], references: [id, feeKobo], onDelete: Restrict, onUpdate: Restrict)
+
+  method PaymentMethod
+
+  // Our own reference (cash too); for a card, also Paystack's. The webhook
+  // idempotency key.
   reference String @unique
 
-  // From the app, one per entry attempt. A repeated tap returns this payment.
+  // From the booth app, one per payment attempt.
   idempotencyKey String @unique @map("idempotency_key")
 
-  operatorId String          @map("operator_id") @db.Uuid
-  operator   AppUser         @relation(fields: [operatorId], references: [id], onDelete: Restrict)
-  gateId     String          @map("gate_id") @db.Uuid
-  gate       Gate            @relation(fields: [gateId], references: [id], onDelete: Restrict)
-  categoryId String          @map("category_id") @db.Uuid
-  category   VehicleCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-
-  // Snapshot of the category when the payment started. A price change never
-  // reaches a payment already started.
-  categoryCode String @map("category_code")
-  categoryName String @map("category_name")
-  amountKobo   Int    @map("amount_kobo")
-
-  customerName String? @map("customer_name")
+  // The booth: who, where, which device.
+  operatorId String  @map("operator_id") @db.Uuid
+  operator   AppUser @relation(fields: [operatorId], references: [id], onDelete: Restrict)
+  gateId     String  @map("gate_id") @db.Uuid
+  gate       Gate    @relation(fields: [gateId], references: [id], onDelete: Restrict)
+  deviceRef  String  @map("device_ref")
 
   status PaymentStatus @default(PENDING)
 
+  // Card only: Paystack's checkout.
   authorizationUrl String? @map("authorization_url")
   accessCode       String? @map("access_code")
 
-  // The last verified Paystack payload.
+  // Card only: the last verified Paystack payload (authorization_code removed).
   paystackEvent Json? @map("paystack_event")
 
   // Backend time when SUCCESS was recorded. Set if and only if SUCCESS.
-  // valid_until counts from this.
   paidAt DateTime? @map("paid_at") @db.Timestamptz(6)
 
-  // Paystack's own paid time, copied from its payload (Sprint 2). For
-  // reconciliation only: NEVER used for validity.
+  // Card only: Paystack's own paid time. Reconciliation only.
   paystackPaidAt DateTime? @map("paystack_paid_at") @db.Timestamptz(6)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  ticket Ticket?
+  paidTickets Ticket[] @relation("TicketPaidPayment")
 
+  // Target of the ticket's composite key: the paying payment belongs to it.
+  @@unique([id, ticketId])
   @@index([siteId, status])
+  @@index([ticketId])
   @@map("payment")
-}
-
-model Ticket {
-  id     String @id @default(uuid()) @db.Uuid
-  siteId String @map("site_id") @db.Uuid
-  site   Site   @relation(fields: [siteId], references: [id], onDelete: Restrict)
-
-  // One ticket per payment, and only for a SUCCESS payment: the trigger
-  // ticket_requires_success_payment (raw SQL in 0001_init) refuses an INSERT
-  // unless the payment is SUCCESS, reading it FOR SHARE. The payment's status
-  // may still change later (Phase 2 refunds) without touching the ticket.
-  paymentId String  @unique @map("payment_id") @db.Uuid
-  payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
-
-  // The QR. 32 random bytes as base64url (43 characters). Stored nowhere else.
-  token        String @unique
-  ticketNumber String @map("ticket_number") // XXXX-XXXX; not a credential
-
-  operatorId String  @map("operator_id") @db.Uuid
-  operator   AppUser @relation("TicketOperator", fields: [operatorId], references: [id], onDelete: Restrict)
-  gateId     String  @map("gate_id") @db.Uuid
-  gate       Gate    @relation("TicketEntryGate", fields: [gateId], references: [id], onDelete: Restrict)
-
-  categoryName     String  @map("category_name")
-  amountKobo       Int     @map("amount_kobo")
-  customerName     String? @map("customer_name")
-  paymentReference String  @map("payment_reference")
-
-  paidAt        DateTime @map("paid_at") @db.Timestamptz(6)
-  issuedAt      DateTime @default(now()) @map("issued_at") @db.Timestamptz(6)
-  validityHours Int      @map("validity_hours")
-  validUntil    DateTime @map("valid_until") @db.Timestamptz(6)
-
-  status TicketStatus @default(ACTIVE)
-
-  usedAt     DateTime? @map("used_at") @db.Timestamptz(6)
-  usedGateId String?   @map("used_gate_id") @db.Uuid
-  usedGate   Gate?     @relation("TicketUsedGate", fields: [usedGateId], references: [id], onDelete: Restrict)
-  usedById   String?   @map("used_by_id") @db.Uuid
-  usedBy     AppUser?  @relation("TicketUsedBy", fields: [usedById], references: [id], onDelete: Restrict)
-
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-
-  scanEvents ScanEvent[]
-
-  @@unique([siteId, ticketNumber])
-  @@index([siteId, status, validUntil])
-  @@map("ticket")
 }
 
 // ---------------------------------------------------------------------------

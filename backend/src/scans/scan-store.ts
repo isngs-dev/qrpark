@@ -1,10 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import type { Prisma, PrismaClient } from '@prisma/client';
+import { SUMMARY_COLUMNS, SUMMARY_FROM, summaryOf, type SummaryRow, type TicketSummary } from '../tickets/ticket-view';
 
 /**
  * Every database statement a scan makes, and nothing else. Three methods:
  *
- *   consume   THE single conditional UPDATE that closes a ticket (validate only)
+ *   consume   THE single conditional UPDATE that validates a ticket (exit only)
  *   inspect   a read that decides why consume changed nothing, or answers a
  *             check. Never writes.
  *   record    the scan_event row
@@ -23,26 +24,15 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 
 export type Db = PrismaClient | Prisma.TransactionClient;
 
-export interface Consumed {
+export interface Consumed extends TicketSummary {
   ticketId: string;
-  ticketNumber: string;
-  categoryName: string;
-  customerName: string | null;
-  paidAt: Date;
-  validUntil: Date;
+  /** validated_at: the database's now() of the closing statement. */
   usedAt: Date;
 }
 
 export interface Inspected {
   ticketId: string;
-  ticketNumber: string;
-  categoryName: string;
-  customerName: string | null;
-  paidAt: Date;
-  validUntil: Date;
-  status: 'ACTIVE' | 'USED';
-  /** ACTIVE and past valid_until, by the database clock. */
-  expired: boolean;
+  summary: TicketSummary;
   usedAt: Date | null;
   usedGate: { code: string; name: string } | null;
   usedBy: { id: string; name: string; username: string } | null;
@@ -52,7 +42,7 @@ export interface ScanRecord {
   siteId: string;
   ticketId: string | null;
   kind: 'CHECK' | 'EXIT';
-  result: 'VALID' | 'ACTIVE' | 'ALREADY_USED' | 'EXPIRED' | 'NOT_FOUND' | 'INVALID_QR';
+  result: 'VALID' | 'ACTIVE' | 'PAYMENT_REQUIRED' | 'ALREADY_USED' | 'EXPIRED' | 'NOT_FOUND' | 'INVALID_QR';
   gateId: string;
   operatorId: string;
   deviceRef: string;
@@ -61,77 +51,57 @@ export interface ScanRecord {
 @Injectable()
 export class ScanStore {
   /**
-   * Close the ticket if, and only if, it is ACTIVE and not expired, in ONE
-   * statement. Postgres row-locks the ticket for the UPDATE: of any number of
+   * Validate the ticket if, and only if, it is PAID, not validated and not
+   * expired (now() < valid_until, the database clock), in ONE statement.
+   * Postgres row-locks the ticket for the UPDATE: of any number of
    * simultaneous calls, the first changes it and every other one re-checks
-   * the WHERE against the committed row, finds it USED, and changes nothing.
-   * Null when nothing was changed.
+   * the WHERE against the committed row, finds it VALIDATED, and changes
+   * nothing. Null when nothing was changed.
    */
   async consume(
     db: Db,
     input: { siteId: string; token: string; gateId: string; operatorId: string },
   ): Promise<Consumed | null> {
-    const rows = await db.$queryRawUnsafe<
-      Array<{
-        ticket_id: string;
-        ticket_number: string;
-        category_name: string;
-        customer_name: string | null;
-        paid_at: Date;
-        valid_until: Date;
-        used_at: Date;
-      }>
-    >(
-      `UPDATE ticket
-          SET status = 'USED', used_at = now(), used_gate_id = $3::uuid, used_by_id = $4::uuid, updated_at = now()
-        WHERE site_id = $2::uuid AND token = $1 AND status = 'ACTIVE' AND valid_until >= now()
-        RETURNING id::text AS ticket_id, ticket_number, category_name, customer_name, paid_at, valid_until, used_at`,
+    const rows = await db.$queryRawUnsafe<Array<SummaryRow & { used_at: Date }>>(
+      `WITH closed AS (
+         UPDATE ticket
+            SET validation_status = 'VALIDATED', validated_at = now(), validated_gate_id = $3::uuid,
+                validated_by_id = $4::uuid, updated_at = now()
+          WHERE site_id = $2::uuid AND token = $1
+            AND payment_status = 'PAID' AND validation_status = 'NOT_VALIDATED' AND now() < valid_until
+          RETURNING *
+       )
+       SELECT ${SUMMARY_COLUMNS}, t.validated_at AS used_at
+         FROM closed t LEFT JOIN payment pp ON pp.id = t.paid_payment_id`,
       input.token,
       input.siteId,
       input.gateId,
       input.operatorId,
     );
     if (rows.length === 0) return null;
-    const r = rows[0];
-    return {
-      ticketId: r.ticket_id,
-      ticketNumber: r.ticket_number,
-      categoryName: r.category_name,
-      customerName: r.customer_name,
-      paidAt: r.paid_at,
-      validUntil: r.valid_until,
-      usedAt: r.used_at,
-    };
+    return { ...summaryOf(rows[0]), ticketId: rows[0].id, usedAt: rows[0].used_at };
   }
 
   /** Read the ticket for this token at this site. Never writes. Null when there is none. */
   async inspect(db: Db, input: { siteId: string; token: string }): Promise<Inspected | null> {
     const rows = await db.$queryRawUnsafe<
-      Array<{
-        ticket_id: string;
-        ticket_number: string;
-        category_name: string;
-        customer_name: string | null;
-        paid_at: Date;
-        valid_until: Date;
-        status: 'ACTIVE' | 'USED';
-        expired: boolean;
-        used_at: Date | null;
-        gate_code: string | null;
-        gate_name: string | null;
-        user_id: string | null;
-        user_name: string | null;
-        user_username: string | null;
-      }>
+      Array<
+        SummaryRow & {
+          used_at: Date | null;
+          gate_code: string | null;
+          gate_name: string | null;
+          user_id: string | null;
+          user_name: string | null;
+          user_username: string | null;
+        }
+      >
     >(
-      `SELECT t.id::text AS ticket_id, t.ticket_number, t.category_name, t.customer_name, t.paid_at,
-              t.valid_until, t.status::text AS status,
-              (t.status = 'ACTIVE' AND t.valid_until < now()) AS expired,
-              t.used_at, g.code AS gate_code, g.name AS gate_name,
+      `SELECT ${SUMMARY_COLUMNS}, t.validated_at AS used_at,
+              g.code AS gate_code, g.name AS gate_name,
               u.id::text AS user_id, u.name AS user_name, u.username AS user_username
-         FROM ticket t
-         LEFT JOIN gate g ON g.id = t.used_gate_id
-         LEFT JOIN app_user u ON u.id = t.used_by_id
+         FROM ${SUMMARY_FROM}
+         LEFT JOIN gate g ON g.id = t.validated_gate_id
+         LEFT JOIN app_user u ON u.id = t.validated_by_id
         WHERE t.site_id = $2::uuid AND t.token = $1`,
       input.token,
       input.siteId,
@@ -139,14 +109,8 @@ export class ScanStore {
     if (rows.length === 0) return null;
     const r = rows[0];
     return {
-      ticketId: r.ticket_id,
-      ticketNumber: r.ticket_number,
-      categoryName: r.category_name,
-      customerName: r.customer_name,
-      paidAt: r.paid_at,
-      validUntil: r.valid_until,
-      status: r.status,
-      expired: r.expired,
+      ticketId: r.id,
+      summary: summaryOf(r),
       usedAt: r.used_at,
       usedGate: r.gate_code !== null ? { code: r.gate_code, name: r.gate_name! } : null,
       usedBy: r.user_id !== null ? { id: r.user_id, name: r.user_name!, username: r.user_username! } : null,

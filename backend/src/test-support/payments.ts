@@ -1,8 +1,9 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import * as argon2 from 'argon2';
 import { call, type TestApp, type TestUser } from './app';
+import { as, newKey } from './tickets';
 
-/** Helpers shared by the payment, webhook, job and ticket tests. */
+/** Helpers shared by the card, webhook, job and race tests. */
 
 export async function addCategory(t: TestApp, code: string, priceKobo: number, isActive = true) {
   return t.prisma.vehicleCategory.create({
@@ -10,33 +11,30 @@ export async function addCategory(t: TestApp, code: string, priceKobo: number, i
   });
 }
 
-/** Another entry operator at the same entry gate. */
-export async function addEntryOperator(t: TestApp, username: string): Promise<TestUser> {
+/** Another payment operator at the test booth. */
+export async function addBoothOperator(t: TestApp, username: string): Promise<TestUser> {
   const password = randomBytes(18).toString('base64url');
   const row = await t.prisma.appUser.create({
     data: {
       siteId: t.siteId,
       username,
       name: username,
-      role: 'ENTRY_OPERATOR',
-      gateId: t.entryGateId,
+      role: 'PAYMENT_OPERATOR',
+      gateId: t.boothGateId,
       passwordHash: await argon2.hash(password, { type: argon2.argon2id }),
     },
   });
-  return { id: row.id, username, password, role: 'ENTRY_OPERATOR' };
+  return { id: row.id, username, password, role: 'PAYMENT_OPERATOR' };
 }
 
-export function newKey(): string {
-  return randomUUID();
-}
-
-export async function startPayment(
+/** POST /payments/card against a ticket (by id unless a token is given). */
+export async function startCard(
   t: TestApp,
   userId: string,
-  body: { categoryCode: string; customerName?: string | null; idempotencyKey?: string },
+  body: { ticketId?: string; token?: string; idempotencyKey?: string },
+  opts: { device?: string | null } = {},
 ) {
-  const token = await t.accessToken(userId);
-  return call(t, 'POST', '/payments', { token, body: { idempotencyKey: newKey(), ...body } });
+  return as(t, userId, 'POST', '/payments/card', { idempotencyKey: newKey(), ...body }, opts);
 }
 
 export async function getPayment(t: TestApp, userId: string, paymentId: string) {
@@ -56,3 +54,5 @@ export async function agePayment(t: TestApp, paymentId: string, minutes: number)
 export async function clearPending(t: TestApp, operatorId: string) {
   await t.prisma.payment.updateMany({ where: { operatorId, status: 'PENDING' }, data: { status: 'ABANDONED' } });
 }
+
+export { newKey };

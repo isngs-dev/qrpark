@@ -1,29 +1,43 @@
 import { BadRequestException } from '@nestjs/common';
-import type { GateDirection } from '@prisma/client';
+import type { GateDirection, PrismaClient } from '@prisma/client';
 
 /**
- * Copied from eparking backend/src/config/gate-in-service.ts and adapted: a
- * payment is taken only at an entry gate that is in service. The two checks
- * stay separate because they send the operator to different fixes.
+ * Copied from eparking backend/src/config/gate-in-service.ts and adapted to
+ * three kinds of location: each job works only at an in-service location of
+ * its own kind (ENTRY gate, payment BOOTH, EXIT gate). The two checks stay
+ * separate because they send the operator to different fixes.
  */
 
 export function assertGateInService(gate: { code: string; isActive: boolean } | null): void {
-  if (!gate) throw new BadRequestException('Your account has no gate. Ask an administrator to assign one.');
+  if (!gate) throw new BadRequestException('Your account has no location. Ask an administrator to assign one.');
   if (gate.isActive) return;
   throw new BadRequestException(
-    `Gate "${gate.code}" is out of service. Ask an administrator to return it to service.`,
+    `Location "${gate.code}" is out of service. Ask an administrator to return it to service.`,
   );
 }
 
-export function assertGateAcceptsEntry(gate: { code: string; direction: GateDirection }): void {
-  if (gate.direction === 'ENTRY') return;
+const KIND_NAME: Record<GateDirection, string> = { ENTRY: 'an entry gate', BOOTH: 'a payment booth', EXIT: 'an exit gate' };
+
+/** The location is of the kind this job needs. */
+export function assertGateKind(gate: { code: string; direction: GateDirection }, kind: GateDirection): void {
+  if (gate.direction === kind) return;
   throw new BadRequestException(
-    `Gate "${gate.code}" is an exit gate; payments are taken at entry gates.`,
+    `Location "${gate.code}" is ${KIND_NAME[gate.direction]}; this is done at ${KIND_NAME[kind]}.`,
   );
 }
 
-/** Exit validation happens only at an exit gate. */
-export function assertGateAcceptsExit(gate: { code: string; direction: GateDirection }): void {
-  if (gate.direction === 'EXIT') return;
-  throw new BadRequestException(`Gate "${gate.code}" is an entry gate; tickets are validated at exit gates.`);
+/**
+ * The operator's assigned location, read now: in service and of `kind`.
+ * Refused: 400, before anything is written.
+ */
+export async function locationFor(
+  prisma: Pick<PrismaClient, 'gate'>,
+  actor: { gateId: string | null },
+  siteId: string,
+  kind: GateDirection,
+) {
+  const gate = actor.gateId ? await prisma.gate.findFirst({ where: { id: actor.gateId, siteId } }) : null;
+  assertGateInService(gate);
+  assertGateKind(gate!, kind);
+  return gate!;
 }

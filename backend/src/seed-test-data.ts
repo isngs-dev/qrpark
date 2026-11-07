@@ -105,8 +105,8 @@ export async function seedTestData(options: {
   // ------------------------------------------------------ test accounts
   const passwords: Array<{ username: string; password: string }> = [];
   for (const account of TEST_ACCOUNTS) {
-    const existing = await prisma.appUser.findUnique({
-      where: { siteId_username: { siteId: site.id, username: account.username } },
+    const existing = await prisma.appUser.findFirst({
+      where: { siteId: site.id, username: account.username, deletedAt: null },
     });
     if (existing) {
       kept(`account ${account.username} - password not shown again`);

@@ -8,7 +8,6 @@ import {
   assertCode,
   assertPaymentWindow,
   assertPriceKobo,
-  assertValidityHours,
   cleanDisplayName,
   cleanName,
   cleanReceiptLine,
@@ -27,7 +26,6 @@ const CATEGORY = { id: true, code: true, name: true, priceKobo: true, isActive: 
 const GATE = { id: true, code: true, name: true, direction: true, isActive: true, createdAt: true, updatedAt: true } as const;
 const SETTINGS = {
   displayName: true,
-  validityHours: true,
   paymentWindowMinutes: true,
   receiptOrgName: true,
   receiptContactLine: true,
@@ -158,14 +156,12 @@ export class ConfigService {
   }
 
   /**
-   * Change validity hours, the display name or the receipt lines. A new
-   * validity applies to tickets issued AFTER it: each ticket stores its own
-   * validity_hours and valid_until.
+   * Change the payment window, the display name or the receipt lines. There
+   * is no validity setting: a ticket is valid on its day of issue.
    */
   async updateSettings(
     input: {
       displayName?: string;
-      validityHours?: number;
       paymentWindowMinutes?: number;
       receiptOrgName?: string | null;
       receiptContactLine?: string | null;
@@ -175,16 +171,11 @@ export class ConfigService {
     const siteId = await this.site.getId();
     const data: {
       displayName?: string;
-      validityHours?: number;
       paymentWindowMinutes?: number;
       receiptOrgName?: string | null;
       receiptContactLine?: string | null;
     } = {};
     if (input.displayName !== undefined) data.displayName = cleanDisplayName(input.displayName);
-    if (input.validityHours !== undefined) {
-      assertValidityHours(input.validityHours);
-      data.validityHours = input.validityHours;
-    }
     if (input.paymentWindowMinutes !== undefined) {
       assertPaymentWindow(input.paymentWindowMinutes);
       data.paymentWindowMinutes = input.paymentWindowMinutes;

@@ -6,9 +6,6 @@ import {
   assertUniqueRefused,
   attemptInRollback,
   buildFixture,
-  fakeTicketNumber,
-  fakeToken,
-  insertPayment,
   rawInsertTicket,
   requireDatabase,
 } from '../test-support/db';
@@ -80,7 +77,7 @@ test('price_kobo: the column is INTEGER, so a fraction cannot be stored', async 
   const rows = await prisma.$queryRaw<Array<{ data_type: string }>>`
     SELECT data_type FROM information_schema.columns
     WHERE table_name IN ('vehicle_category', 'payment', 'ticket')
-      AND column_name IN ('price_kobo', 'amount_kobo')`;
+      AND column_name IN ('price_kobo', 'amount_kobo', 'fee_kobo')`;
   assert.equal(rows.length, 3);
   for (const row of rows) assert.equal(row.data_type, 'integer');
 
@@ -91,186 +88,8 @@ test('price_kobo: the column is INTEGER, so a fraction cannot be stored', async 
   assertRefusedBy(message, 'invalid input syntax for type integer');
 });
 
-test('amount_kobo on payment: zero is refused by payment_amount_kobo_check', async () => {
-  const message = await attemptInRollback(prisma, async (tx) => {
-    const fx = await buildFixture(tx);
-    const payment = await insertPayment(tx, fx, 'PENDING');
-    await tx.$executeRawUnsafe(`UPDATE payment SET amount_kobo = 0 WHERE id = $1::uuid`, payment.id);
-  });
-  assertRefusedBy(message, 'payment_amount_kobo_check');
-});
-
-// ----------------------------------------------------------------- payments
-
-test('one PENDING payment per operator: a second is refused by payment_one_pending_per_operator', async () => {
-  const message = await attemptInRollback(prisma, async (tx) => {
-    const fx = await buildFixture(tx);
-    await insertPayment(tx, fx, 'PENDING');
-    await insertPayment(tx, fx, 'PENDING');
-  });
-  assertUniqueRefused(message, 'operator_id');
-});
-
-test('one PENDING payment per operator: other statuses, and other operators, are not blocked (control)', async () => {
-  const message = await attemptInRollback(prisma, async (tx) => {
-    const fx = await buildFixture(tx);
-    await insertPayment(tx, fx, 'PENDING');
-    await insertPayment(tx, fx, 'FAILED');
-    await insertPayment(tx, fx, 'SUCCESS');
-    await insertPayment(tx, fx, 'SUCCESS');
-    await insertPayment(tx, fx, 'PENDING', { operatorId: fx.exitOpId });
-  });
-  assert.equal(message, null);
-});
-
-test('payment reference is unique (payment_reference_key)', async () => {
-  const message = await attemptInRollback(prisma, async (tx) => {
-    const fx = await buildFixture(tx);
-    await insertPayment(tx, fx, 'FAILED', { reference: 'QRP-SAME' });
-    await insertPayment(tx, fx, 'FAILED', { reference: 'QRP-SAME' });
-  });
-  assertUniqueRefused(message, 'reference');
-});
-
-test('idempotency key is unique across the table, whoever sent it (payment_idempotency_key_key)', async () => {
-  const message = await attemptInRollback(prisma, async (tx) => {
-    const fx = await buildFixture(tx);
-    await insertPayment(tx, fx, 'FAILED', { idempotencyKey: 'same-key' });
-    await insertPayment(tx, fx, 'FAILED', { idempotencyKey: 'same-key', operatorId: fx.exitOpId });
-  });
-  assertUniqueRefused(message, 'idempotency_key');
-});
-
-test('paid_at is set if and only if SUCCESS (payment_paid_at_iff_success_check)', async () => {
-  const noPaidAt = await attemptInRollback(prisma, async (tx) => {
-    const fx = await buildFixture(tx);
-    const payment = await insertPayment(tx, fx, 'SUCCESS');
-    await tx.$executeRawUnsafe(`UPDATE payment SET paid_at = NULL WHERE id = $1::uuid`, payment.id);
-  });
-  assertRefusedBy(noPaidAt, 'payment_paid_at_iff_success_check');
-
-  const pendingWithPaidAt = await attemptInRollback(prisma, async (tx) => {
-    const fx = await buildFixture(tx);
-    const payment = await insertPayment(tx, fx, 'PENDING');
-    await tx.$executeRawUnsafe(`UPDATE payment SET paid_at = now() WHERE id = $1::uuid`, payment.id);
-  });
-  assertRefusedBy(pendingWithPaidAt, 'payment_paid_at_iff_success_check');
-});
-
-// ------------------------------------------------------------------ tickets
-
-test('a ticket for a SUCCESS payment is accepted (control)', async () => {
-  const message = await attemptInRollback(prisma, async (tx) => {
-    const fx = await buildFixture(tx);
-    const payment = await insertPayment(tx, fx, 'SUCCESS');
-    await rawInsertTicket(tx, fx, payment.id);
-  });
-  assert.equal(message, null);
-});
-
-test('no ticket for a payment that is not SUCCESS: raw insert refused by trigger ticket_requires_success_payment', async () => {
-  for (const status of ['PENDING', 'FAILED', 'ABANDONED'] as const) {
-    const message = await attemptInRollback(prisma, async (tx) => {
-      const fx = await buildFixture(tx);
-      const payment = await insertPayment(tx, fx, status);
-      await rawInsertTicket(tx, fx, payment.id);
-    });
-    assertRefusedBy(message, `is ${status}, not SUCCESS`);
-  }
-});
-
-test('a payment with a ticket may still change status later (no freeze; Phase 2 refunds)', async () => {
-  const message = await attemptInRollback(prisma, async (tx) => {
-    const fx = await buildFixture(tx);
-    const payment = await insertPayment(tx, fx, 'SUCCESS');
-    await rawInsertTicket(tx, fx, payment.id);
-    await tx.$executeRawUnsafe(`UPDATE payment SET status = 'FAILED', paid_at = NULL WHERE id = $1::uuid`, payment.id);
-  });
-  assert.equal(message, null);
-});
-
-test('one ticket per payment (ticket_payment_id_key)', async () => {
-  const message = await attemptInRollback(prisma, async (tx) => {
-    const fx = await buildFixture(tx);
-    const payment = await insertPayment(tx, fx, 'SUCCESS');
-    await rawInsertTicket(tx, fx, payment.id);
-    await rawInsertTicket(tx, fx, payment.id);
-  });
-  assertUniqueRefused(message, 'payment_id');
-});
-
-test('ticket token is unique (ticket_token_key)', async () => {
-  const message = await attemptInRollback(prisma, async (tx) => {
-    const fx = await buildFixture(tx);
-    const token = fakeToken();
-    await rawInsertTicket(tx, fx, (await insertPayment(tx, fx, 'SUCCESS')).id, { token });
-    await rawInsertTicket(tx, fx, (await insertPayment(tx, fx, 'SUCCESS')).id, { token });
-  });
-  assertUniqueRefused(message, 'token');
-});
-
-test('ticket token must be 43 base64url characters (ticket_token_check)', async () => {
-  for (const token of ['short', `${fakeToken()}x`, `${fakeToken().slice(0, 42)}=`]) {
-    const message = await attemptInRollback(prisma, async (tx) => {
-      const fx = await buildFixture(tx);
-      await rawInsertTicket(tx, fx, (await insertPayment(tx, fx, 'SUCCESS')).id, { token });
-    });
-    assertRefusedBy(message, 'ticket_token_check');
-  }
-});
-
-test('ticket number is unique per site (ticket_site_id_ticket_number_key)', async () => {
-  const message = await attemptInRollback(prisma, async (tx) => {
-    const fx = await buildFixture(tx);
-    const ticketNumber = fakeTicketNumber();
-    await rawInsertTicket(tx, fx, (await insertPayment(tx, fx, 'SUCCESS')).id, { ticketNumber });
-    await rawInsertTicket(tx, fx, (await insertPayment(tx, fx, 'SUCCESS')).id, { ticketNumber });
-  });
-  assertUniqueRefused(message, 'site_id, ticket_number');
-});
-
-test('ticket number format XXXX-XXXX without look-alikes (ticket_ticket_number_check)', async () => {
-  for (const ticketNumber of ['ABCD-EFG0', 'ABCD-EFGO', 'ABCD-EFG1', 'ABCD-EFGI', 'ABCD-EFGL', 'abcd-efgh', 'ABCDEFGH']) {
-    const message = await attemptInRollback(prisma, async (tx) => {
-      const fx = await buildFixture(tx);
-      await rawInsertTicket(tx, fx, (await insertPayment(tx, fx, 'SUCCESS')).id, { ticketNumber });
-    });
-    assertRefusedBy(message, 'ticket_ticket_number_check');
-  }
-});
-
-test('valid_until must equal paid_at + validity_hours (ticket_valid_until_check)', async () => {
-  const message = await attemptInRollback(prisma, async (tx) => {
-    const fx = await buildFixture(tx);
-    await rawInsertTicket(tx, fx, (await insertPayment(tx, fx, 'SUCCESS')).id);
-    await tx.$executeRawUnsafe(`UPDATE ticket SET valid_until = valid_until + interval '1 hour' WHERE site_id = $1::uuid`, fx.siteId);
-  });
-  assertRefusedBy(message, 'ticket_valid_until_check');
-});
-
-test('USED needs used_at, used_gate_id and used_by_id together (ticket_used_fields_check)', async () => {
-  const message = await attemptInRollback(prisma, async (tx) => {
-    const fx = await buildFixture(tx);
-    await rawInsertTicket(tx, fx, (await insertPayment(tx, fx, 'SUCCESS')).id);
-    await tx.$executeRawUnsafe(`UPDATE ticket SET status = 'USED', used_at = now() WHERE site_id = $1::uuid`, fx.siteId);
-  });
-  assertRefusedBy(message, 'ticket_used_fields_check');
-});
-
-test('a ticket cannot be marked used after valid_until (ticket_used_before_expiry_check)', async () => {
-  const message = await attemptInRollback(prisma, async (tx) => {
-    const fx = await buildFixture(tx);
-    await rawInsertTicket(tx, fx, (await insertPayment(tx, fx, 'SUCCESS')).id);
-    await tx.$executeRawUnsafe(
-      `UPDATE ticket SET status = 'USED', used_at = valid_until + interval '1 second',
-         used_gate_id = $2::uuid, used_by_id = $3::uuid WHERE site_id = $1::uuid`,
-      fx.siteId,
-      fx.exitGateId,
-      fx.exitOpId,
-    );
-  });
-  assertRefusedBy(message, 'ticket_used_before_expiry_check');
-});
+// The payment and ticket rules of the new flow (0003) are in
+// tickets-payments.lifecycle.test.ts.
 
 // -------------------------------------------------------------- scan events
 
@@ -296,9 +115,7 @@ async function rawScan(
 }
 
 async function ticketId(tx: Parameters<Parameters<typeof attemptInRollback>[1]>[0], fx: Awaited<ReturnType<typeof buildFixture>>) {
-  await rawInsertTicket(tx, fx, (await insertPayment(tx, fx, 'SUCCESS')).id);
-  const row = await tx.ticket.findFirstOrThrow({ where: { siteId: fx.siteId }, select: { id: true } });
-  return row.id;
+  return (await rawInsertTicket(tx, fx)).id;
 }
 
 test('scan results: ACTIVE only for CHECK, VALID only for EXIT (scan_event_result_by_kind_check)', async () => {
@@ -378,28 +195,12 @@ test('username: lower-case, 3-32 of a-z 0-9 . _ - (app_user_username_check)', as
   }
 });
 
-test('username is unique per site (app_user_site_id_username_key)', async () => {
+test('username is unique per site among live accounts (app_user_live_username_key)', async () => {
   const message = await attemptInRollback(prisma, async (tx) => {
     const fx = await buildFixture(tx);
     await tx.$executeRawUnsafe(`UPDATE app_user SET username = 'admin' WHERE id = $1::uuid`, fx.entryOpId);
   });
   assertUniqueRefused(message, 'site_id, username');
-});
-
-test('validity_hours is 1-72 (site_setting_validity_hours_check)', async () => {
-  for (const hours of [0, 73, -1]) {
-    const message = await attemptInRollback(prisma, async (tx) => {
-      const fx = await buildFixture(tx);
-      await tx.$executeRawUnsafe(`UPDATE site_setting SET validity_hours = $1 WHERE site_id = $2::uuid`, hours, fx.siteId);
-    });
-    assertRefusedBy(message, 'site_setting_validity_hours_check');
-  }
-  const control = await attemptInRollback(prisma, async (tx) => {
-    const fx = await buildFixture(tx);
-    await tx.$executeRawUnsafe(`UPDATE site_setting SET validity_hours = 72 WHERE site_id = $1::uuid`, fx.siteId);
-    await tx.$executeRawUnsafe(`UPDATE site_setting SET validity_hours = 1 WHERE site_id = $1::uuid`, fx.siteId);
-  });
-  assert.equal(control, null);
 });
 
 test('payment_window_minutes is 1-30, default 5 (site_setting_payment_window_minutes_check)', async () => {

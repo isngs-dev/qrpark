@@ -4,7 +4,7 @@
 in the same commit as any endpoint change. If it and the code disagree, say
 which is wrong.
 
-Created: Sprint 1. Last change: Sprint 3 (validate and check). The access column is enforced by the global guard and
+Created: Sprint 1. Last change: Sprint R (the booth flow: tickets at entry, cash and card at the booth, exit requires PAID). The access column is enforced by the global guard and
 pinned by `backend/src/auth/routes.lifecycle.test.ts`, which fails if a route
 is added without being listed there.
 
@@ -26,49 +26,56 @@ is added without being listed there.
 
 | Code | Meaning |
 |---|---|
-| 401 | No token, a bad or expired token, a refresh token used as an access token, or a session that has ended (logout, deactivation, role/gate change, password reset) |
+| 401 | No token, a bad or expired token, a refresh token used as an access token, or a session that has ended (logout, deactivation, deletion, role/gate change, password reset) |
 | 403 | Signed in, but the role may not call this route |
-| 409 | A unique value is taken (category code, gate code, username) |
+| 409 | A unique value is taken (category code, location code, username), an idempotency key reused, or the booth refusing a ticket (expired, paid, used, card payment in progress) |
 
 ### Sessions
 
 - Access token: 15 minutes. Refresh token: 7 days. Both HS256 JWTs, issuer `qrpark`.
-- Every request re-reads the user. A deactivated user, or a token from before
-  the user's last logout, role change, gate change or password reset, is 401
-  at once.
+- Every request re-reads the user. A deactivated or deleted user, or a token
+  from before the user's last logout, role change, location change or password
+  reset, is 401 at once.
 - The role checked is the one in the database, never the one in the token.
 
 ---
 
 ## Access
 
-| Route | Public | ADMIN | ENTRY_OPERATOR | EXIT_OPERATOR |
-|---|---|---|---|---|
-| `GET /health` | yes | | | |
-| `POST /auth/login` | yes | | | |
-| `POST /auth/refresh` | yes | | | |
-| `POST /auth/logout` | | yes | yes | yes |
-| `GET /admin/categories` | | yes | | |
-| `POST /admin/categories` | | yes | | |
-| `PATCH /admin/categories/:id` | | yes | | |
-| `GET /admin/settings` | | yes | | |
-| `PATCH /admin/settings` | | yes | | |
-| `GET /admin/gates` | | yes | | |
-| `POST /admin/gates` | | yes | | |
-| `PATCH /admin/gates/:id` | | yes | | |
-| `GET /admin/users` | | yes | | |
-| `GET /admin/users/:id` | | yes | | |
-| `POST /admin/users` | | yes | | |
-| `PATCH /admin/users/:id` | | yes | | |
-| `POST /admin/users/:id/password` | | yes | | |
-| `GET /categories` | | | yes | |
-| `POST /payments` | | | yes | |
-| `GET /payments/:id` | | | yes (own) | |
-| `POST /paystack/webhook` | signed | | | |
-| `GET /tickets/recent` | | | yes (own) | |
-| `POST /tickets/reprint` | | | yes | |
-| `POST /tickets/validate` | | | | yes |
-| `POST /tickets/check` | | | yes | yes |
+| Route | Public | ADMIN | ENTRY_OPERATOR | PAYMENT_OPERATOR | EXIT_OPERATOR |
+|---|---|---|---|---|---|
+| `GET /health` | yes | | | | |
+| `POST /auth/login` | yes | | | | |
+| `POST /auth/refresh` | yes | | | | |
+| `POST /auth/logout` | | yes | yes | yes | yes |
+| `GET /admin/categories` | | yes | | | |
+| `POST /admin/categories` | | yes | | | |
+| `PATCH /admin/categories/:id` | | yes | | | |
+| `GET /admin/settings` | | yes | | | |
+| `PATCH /admin/settings` | | yes | | | |
+| `GET /admin/gates` | | yes | | | |
+| `POST /admin/gates` | | yes | | | |
+| `PATCH /admin/gates/:id` | | yes | | | |
+| `GET /admin/users` | | yes | | | |
+| `GET /admin/users/:id` | | yes | | | |
+| `POST /admin/users` | | yes | | | |
+| `PATCH /admin/users/:id` | | yes | | | |
+| `DELETE /admin/users/:id` | | yes | | | |
+| `POST /admin/users/:id/password` | | yes | | | |
+| `GET /categories` | | | yes | | |
+| `POST /tickets` | | | yes | | |
+| `GET /tickets/recent` | | | yes (own) | | |
+| `GET /tickets/lookup` | | | yes | yes | |
+| `POST /tickets/reprint` | | | yes | | |
+| `POST /payments/cash` | | | | yes | |
+| `POST /payments/card` | | | | yes | |
+| `GET /payments/:id` | | | | yes (own) | |
+| `POST /paystack/webhook` | signed | | | | |
+| `POST /tickets/check` | | | yes | yes | yes |
+| `POST /tickets/validate` | | | | | yes |
+
+The old `POST /payments` (a payment that created the ticket) is gone since
+Sprint R.
 
 A route with no `@Roles()` is refused for every role (the guard fails closed).
 
@@ -177,7 +184,7 @@ Any of:
 A settings view:
 
 ```json
-{ "displayName": "Garki International Market (TEST)", "validityHours": 12, "paymentWindowMinutes": 5,
+{ "displayName": "Garki International Market (TEST)", "paymentWindowMinutes": 5,
   "receiptOrgName": null, "receiptContactLine": null, "updatedAt": "...", "paystackMode": "test" }
 ```
 
@@ -191,19 +198,19 @@ environment. The backend refuses to start with a live key.
 Any of:
 
 ```json
-{ "displayName": "...", "validityHours": 12, "paymentWindowMinutes": 5, "receiptOrgName": "...", "receiptContactLine": "..." }
+{ "displayName": "...", "paymentWindowMinutes": 5, "receiptOrgName": "...", "receiptContactLine": "..." }
 ```
 
 - `displayName`: trimmed, 1–100 characters.
-- `validityHours`: integer 1–72. Applies to tickets issued after the change only.
+- There is no validity setting: a ticket is valid on its day of issue. `validityHours` is refused (400).
 - `paymentWindowMinutes`: integer 1–30. How long a PENDING payment blocks its operator.
 - `paystackMode` is not accepted (400).
-- `receiptOrgName`, `receiptContactLine`: up to 120 characters; `null` or `""` clears.
+- `receiptOrgName` (the ticket's brand line), `receiptContactLine` (the line beneath): up to 120 characters; `null` or `""` clears.
 - Audited: `SETTINGS_CHANGED` with `{ field: { from, to } }` for each field that changed.
 
 ---
 
-## Admin: gates
+## Admin: locations (gates and booths)
 
 A gate view:
 
@@ -220,7 +227,7 @@ A gate view:
 { "code": "ENTRY_1", "name": "Entry 1", "direction": "ENTRY" }
 ```
 
-`direction` is `ENTRY` or `EXIT`. 409 if the code exists. Audited: `GATE_CREATED`.
+`direction` is the kind: `ENTRY`, `EXIT` or `BOOTH`. 409 if the code exists. Audited: `GATE_CREATED`.
 
 ### `PATCH /admin/gates/:id` → 200
 
@@ -244,6 +251,8 @@ A user view (never a password or hash):
 
 ### `GET /admin/users` → 200 · `GET /admin/users/:id` → 200
 
+Deleted accounts are not listed; `GET`, `PATCH` and `DELETE` of one are 404.
+
 ### `POST /admin/users` → 201
 
 ```json
@@ -252,8 +261,10 @@ A user view (never a password or hash):
 
 - `username`: trimmed and lower-cased; 3–32 of `a-z 0-9 . _ -`. 409 if taken.
 - `password`: at least 12 characters. Hashed with Argon2id; never stored or returned otherwise.
-- `gateId`: required for an operator (an in-service gate facing ENTRY for an
-  `ENTRY_OPERATOR`, EXIT for an `EXIT_OPERATOR`); absent or `null` for an `ADMIN`.
+- `role`: `ADMIN`, `ENTRY_OPERATOR`, `PAYMENT_OPERATOR` or `EXIT_OPERATOR`. One job per account.
+- `gateId`: required for an operator, an in-service location of the job's kind
+  (ENTRY for an `ENTRY_OPERATOR`, BOOTH for a `PAYMENT_OPERATOR`, EXIT for an
+  `EXIT_OPERATOR`); absent or `null` for an `ADMIN`.
 - Audited: `USER_CREATED` `{ username, role, gateCode }`.
 
 ### `PATCH /admin/users/:id` → 200
@@ -272,6 +283,17 @@ Any of:
 - A role change, gate change or deactivation **ends the user's sessions**.
 - Audited: `USER_UPDATED` `{ username, name?, role?, gateCode?, isActive? }`, each `{ from, to }`.
 
+### `DELETE /admin/users/:id` → 200
+
+A **soft delete**: the account disappears from the list and every picker,
+cannot sign in or refresh, and its sessions end at once; its username can be
+reused; its history stays (tickets, payments, scans and audit rows still name
+it). Returns `{ "id": "uuid", "deleted": true }`.
+
+- Refused (400): deleting **yourself**, or the **last active admin** (safe under
+  concurrent requests: the site's admin rows are locked first).
+- Audited: `USER_DELETED` `{ username, role }`.
+
 ### `POST /admin/users/:id/password` → 200
 
 ```json
@@ -283,7 +305,52 @@ Audited: `USER_PASSWORD_RESET` `{ username }` (never the password).
 
 ---
 
-## Payments (entry operators)
+## The booth flow: shared rules
+
+Sprint R (2026-11-07). Entry creates an UNPAID ticket; the payment booth takes
+cash or card; exit requires PAID (`docs/01-flow.md`).
+
+- **Location rules** (in code; the database does not check them): a ticket is
+  created only by an ENTRY_OPERATOR whose location is an in-service ENTRY gate;
+  cash and card only by a PAYMENT_OPERATOR at an in-service BOOTH; validate only
+  by an EXIT_OPERATOR at an in-service EXIT gate; check by each job at its own
+  kind of location. Refused: 400, nothing written.
+- **`X-Device-Id`** (the app's installation id, 1–64 of `A-Z a-z 0-9 _ -`) is
+  required on `POST /tickets`, `POST /payments/cash`, `POST /payments/card`,
+  `POST /tickets/validate` and `POST /tickets/check`. Missing or invalid: 400,
+  nothing written, the value never echoed.
+- **Idempotency keys** (16–100 of `A-Z a-z 0-9 _ -`, one per attempt, a UUID
+  from the app) on `POST /tickets`, `POST /payments/cash` and
+  `POST /payments/card`. The same key from the same operator for the same
+  request returns the first result (200). The same key from another operator,
+  or for a different request, is 409 and returns nothing of the first.
+- **The token** (the QR) is returned only to the entry operator who created the
+  ticket (`POST /tickets`) and on a reprint. It is never in a check, lookup,
+  payment or recent-list response, never logged, never in an error message.
+- **Expiry** is decided on the database clock: a ticket is valid while
+  `now() < valid_until`, and `valid_until` is the start of the next Lagos day
+  after it was issued. "Today's tickets" are those with
+  `valid_until = lagos_day_end(now())`.
+- **Malformed JSON** gets `400 The request body is not valid JSON`, which
+  quotes nothing of the body.
+
+### The ticket summary (no token)
+
+Used by check, lookup, recent and payment responses.
+
+```json
+{ "id": "uuid", "ticketNumber": "K7MP-3QZ9", "categoryName": "Car", "feeKobo": 50000,
+  "issuedAt": "...", "validUntil": "...", "state": "UNPAID",
+  "paymentStatus": "UNPAID", "validationStatus": "NOT_VALIDATED",
+  "paidAt": null, "paymentMethod": null }
+```
+
+`state` is one word for the screen: `UNPAID`, `PAID`, `VALIDATED` or `EXPIRED`
+(not validated and past `validUntil`; paid or not).
+
+---
+
+## Entry (entry operators)
 
 ### `GET /categories` → 200
 
@@ -294,78 +361,139 @@ never computes or edits one.
 [{ "code": "CAR", "name": "Car", "priceKobo": 50000 }]
 ```
 
-### `POST /payments` → 201 (new) or 200 (repeat of the same key)
+### `POST /tickets` → 201 (new) or 200 (repeat of the same key)
+
+Header `X-Device-Id`.
 
 ```json
-{ "categoryCode": "CAR", "customerName": "Ada Obi", "idempotencyKey": "3f1c2a90-6b1e-4c5d-9a7e-0b2c4d6e8f10" }
+{ "categoryCode": "CAR", "idempotencyKey": "3f1c2a90-6b1e-4c5d-9a7e-0b2c4d6e8f10" }
 ```
 
-- `categoryCode`: case-insensitive. Unknown 404; retired 400. **No price field**
-  is accepted (400): the backend copies the category's price onto the payment.
-- `customerName`: optional, trimmed, up to 100; blank is none.
-- `idempotencyKey`: 16–100 of `A-Z a-z 0-9 _ -`, one per entry attempt (a UUID).
-  The same key from the same operator with the same request returns the same
-  payment (200). The same key from **another operator**, or with a different
-  category or name, is 409 and returns nothing of that payment.
-- The operator's gate must be in service and face ENTRY (400 otherwise).
-- **One payment in progress per operator.** While one is PENDING, a new one is
-  409 with `{ "pendingPaymentId": "uuid" }`. A PENDING payment older than the
-  payment window is first checked with Paystack: if paid it settles (and gets
-  its ticket); if not, it is ABANDONED and the new one starts.
-- Redis unreachable: 503, nothing written (the payment lock fails closed).
+Creates the ticket at once: UNPAID, NOT_VALIDATED, the fee snapshot from the
+category's price now, `valid_until` set by the database. No price, name or
+time is accepted (400 for any other field).
+
+Response, the full ticket **with the token** (to print):
+
+```json
+{ "id": "uuid", "ticketNumber": "K7MP-3QZ9", "token": "<43 characters: the QR content>",
+  "categoryCode": "CAR", "categoryName": "Car", "feeKobo": 50000,
+  "issuedAt": "...", "validUntil": "...", "paymentStatus": "UNPAID", "validationStatus": "NOT_VALIDATED",
+  "gate": { "code": "ENTRY_1", "name": "Entry 1" }, "operator": { "name": "..." },
+  "header": { "displayName": "...", "receiptOrgName": null, "receiptContactLine": null } }
+```
+
+Errors: unknown category 404; retired 400; wrong role 403; wrong or
+out-of-service location 400; idempotency key reused by another operator or for
+a different category 409.
+
+### `GET /tickets/recent` → 200
+
+The caller's own tickets issued **today**, newest first, at most 50. Ticket
+summaries (no token).
+
+### `GET /tickets/lookup?suffix=XYZ` (ENTRY_OPERATOR, PAYMENT_OPERATOR) → 200
+
+Customers quote the last characters of the ticket number. `suffix`: 3 or more
+characters, case-insensitive, hyphen optional (`3qz9`, `P-3QZ9`). Returns
+**today's** tickets whose number ends with it, newest first, at most 20, as
+ticket summaries (never the token). No match, a too-short or malformed suffix:
+`404 No ticket found`, the same for every miss.
+
+### `POST /tickets/reprint` (ENTRY_OPERATOR) → 200
+
+```json
+{ "ticketId": "uuid" }
+```
+
+The same QR (the full ticket, with the token) for a ticket issued **today** and
+**not validated**. Any entry operator of the site may reprint. Every miss
+(unknown, malformed, another day, validated) is `404 No active ticket found`,
+the same for all, and nothing is audited. Audited: `TICKET_REPRINTED` by the
+reprinting operator, detail `{ ticketNumber, issuedBy: { id, username } }`.
+
+---
+
+## Booth (payment operators)
+
+Both payment routes take **either** a scanned token **or** a ticket id (after a
+lookup), never both, plus an idempotency key, with the `X-Device-Id` header.
+The amount is **always** the ticket's `feeKobo`; nothing about money comes
+from the client.
+
+```json
+{ "token": "<scanned>", "idempotencyKey": "..." }
+{ "ticketId": "uuid", "idempotencyKey": "..." }
+```
+
+Refused, **409, nothing written** (checked on the database clock, inside the
+same transaction as the write):
+
+| `message` | When |
+|---|---|
+| `Ticket has expired` | issued on an earlier day |
+| `Ticket is already paid` | PAID |
+| `Ticket has already been used` | VALIDATED |
+| `A card payment for this ticket is in progress` | a PENDING card payment exists for the ticket (`pendingPaymentId` in the body) |
+
+An unknown ticket (id or token) is 404 `No ticket found`; a token of the wrong
+shape is the same 404.
+
+### `POST /payments/cash` → 201 (new) or 200 (repeat of the same key)
+
+Records the cash and marks the ticket PAID, in one transaction (the ticket row
+is locked first, then its payments: the same order everywhere). One tap is the
+confirmation; a repeated tap with the same key returns the same payment.
+Audited: `PAYMENT_CASH_CONFIRMED` `{ ticketNumber, amountKobo, reference }`.
+
+```json
+{ "id": "uuid", "reference": "QRP_...", "method": "CASH", "status": "SUCCESS", "amountKobo": 50000,
+  "createdAt": "...", "paidAt": "...", "authorizationUrl": null, "accessCode": null,
+  "ticket": { ...the ticket summary, now PAID... } }
+```
+
+### `POST /payments/card` → 201 (new) or 200 (repeat of the same key)
+
+Starts a Paystack checkout for the ticket's fee (the Sprint 2 flow, now against
+a ticket): the per-operator Redis lock (fails closed: 503 when Redis is down),
+one PENDING payment per ticket and per operator, the delayed checks.
+
+- Another card payment PENDING for this ticket, or for this operator: 409 with
+  `pendingPaymentId`. A PENDING one past the payment window is first checked
+  with Paystack.
+- Paystack refuses: 502 `{ message, paymentId }`, the payment ABANDONED.
+  Paystack does not answer: 503 `{ message, outcome: "unknown", paymentId }`,
+  the payment stays PENDING and is checked.
 - Paystack not configured: 503, nothing written.
 
-Response (the payment view):
+Response: the payment view (as above) with `status: "PENDING"` and the checkout
+in `authorizationUrl` / `accessCode`.
 
-```json
-{ "id": "uuid", "reference": "QRP_0123456789abcdef01234567", "status": "PENDING",
-  "categoryCode": "CAR", "categoryName": "Car", "amountKobo": 50000, "customerName": "Ada Obi",
-  "createdAt": "...", "paidAt": null,
-  "authorizationUrl": "https://checkout.paystack.com/...", "accessCode": "...", "ticket": null }
-```
+### `GET /payments/:id` (PAYMENT_OPERATOR, own) → 200
 
-`authorizationUrl` and `accessCode` are the Paystack checkout, present only
-while PENDING. The app opens it and then **waits**: closing the checkout is
-never success.
+The caller's own payment; any other id is 404. Poll it until `status` is not
+PENDING. `authorizationUrl` and `accessCode` only while PENDING. The ticket
+summary, never the token.
 
-When Paystack answers badly:
+### How a card payment ends
 
-| Paystack | Response | Payment |
-|---|---|---|
-| refuses (a clear "no") | 502 `{ message, paymentId }` | ABANDONED; the operator can start again |
-| does not answer (timeout, 5xx, unreadable) | 503 `{ message, outcome: "unknown", paymentId }` | stays PENDING (Paystack may have it); checked at 3 s and then on the schedule below; blocks a second charge |
+A card payment leaves PENDING only on Paystack's word (signed webhook, or a
+verify check at 20, 45, 90, 150 and 240 s inside the payment window, then the
+2-minute sweep). Paystack's amount must equal the ticket's fee (kobo) in NGN,
+or nothing happens. In the same transaction (ticket row locked first):
 
-### `GET /payments/:id` → 200
-
-The operator's **own** payment only; any other id is 404. Poll this until
-`status` is not PENDING. Once SUCCESS, `ticket` is the full ticket view
-(below), **including the QR token**, for printing.
-
-### How a payment ends
-
-A payment leaves PENDING only on Paystack's word:
-
-- **SUCCESS**: a signed `charge.success` webhook, or Paystack's verify
-  saying success. Paystack's amount must equal ours (kobo) in NGN, or nothing
-  happens. The ticket is created in the same transaction.
-- **FAILED**: a signed `charge.failed`, or verify saying failed.
-- **ABANDONED**: Paystack refused to start it; or Paystack has no such
-  transaction and never gave us a checkout; or, past the payment window,
-  Paystack says it is not paid.
-- Background checks ask Paystack at 20, 45, 90, 150 and 240 s after the start
-  (in case no webhook comes), **only those inside the site's payment window**;
-  when Paystack did not answer the start, a check at 3 s comes first. A sweep
-  every 2 minutes checks every PENDING payment older than 20 s. A check moves a
-  payment only on Paystack's answer: no answer changes nothing.
-- **A late SUCCESS is accepted.** If Paystack confirms a payment already
-  ABANDONED or FAILED, it becomes SUCCESS, the ticket is issued (it appears in
-  the operator's recent list) and a `LATE_SUCCESS` warning is logged.
-
-> **Known double-charge case.** A late SUCCESS on an abandoned checkout, plus
-> a second payment the operator started for the same customer meanwhile, means
-> the customer paid twice and holds two tickets. Resolve it by **refunding one
-> payment in the Paystack dashboard** (this app does not issue refunds); the
-> `LATE_SUCCESS` log line names the reference.
+- **SUCCESS**: the payment SUCCESS and the ticket PAID.
+- **Ticket already PAID** (for example cash was taken, then the customer finished
+  the checkout): the payment becomes **DUPLICATE**, keeps Paystack's time and
+  payload, the ticket is not touched, and an ERROR `DOUBLE_PAYMENT` with the
+  reference is logged. Not revenue: refund it in the Paystack dashboard.
+- **Ticket expired**: the payment SUCCESS and the ticket PAID; it stays EXPIRED
+  and cannot exit; a `LATE_SUCCESS_EXPIRED` warning is logged.
+- **Late SUCCESS after ABANDONED or FAILED**: accepted, `LATE_SUCCESS` warning.
+- FAILED on Paystack's failure; ABANDONED past the window when Paystack says it
+  is not paid, or at once when Paystack has no such transaction and never gave
+  a checkout. No answer from Paystack changes nothing. The sweep touches only
+  PENDING payments, so a DUPLICATE is never reprocessed.
 
 ---
 
@@ -378,161 +506,90 @@ HMAC-SHA512 of the exact request bytes with the secret key.
 
 - Bad or missing signature: **401**, nothing changes.
 - Valid signature, unknown reference: **200**, nothing changes.
-- Valid `charge.success`: settles (idempotent: a repeat, even at the same
-  moment, makes no second ticket). Valid `charge.failed`: PENDING → FAILED.
+- Valid `charge.success`: settles as above (idempotent: a repeat, even at the
+  same moment, changes nothing more). Valid `charge.failed`: PENDING → FAILED.
   Any other event: 200, nothing changes.
 
 Response: `{ "received": true }`.
 
 ---
 
-## Tickets (entry operators)
-
-The ticket view (from `GET /payments/:id` and `POST /tickets/reprint` only):
-
-```json
-{ "id": "uuid", "ticketNumber": "K7MP-3QZ9", "token": "<43 characters: the QR content>",
-  "state": "ACTIVE", "categoryName": "Car", "amountKobo": 50000, "customerName": "Ada Obi",
-  "paymentReference": "QRP_...", "paidAt": "...", "validUntil": "...", "issuedAt": "...",
-  "gate": { "code": "ENTRY_1", "name": "..." }, "operator": { "name": "..." },
-  "header": { "displayName": "...", "receiptOrgName": null, "receiptContactLine": null } }
-```
-
-- `token` is the only thing in the QR. It is never logged and never in an audit row.
-- `state` is `ACTIVE`, `USED` or `EXPIRED` (ACTIVE and past `validUntil`).
-- `validUntil` = `paidAt` + the site's validity hours **at issue time**.
-
-### `GET /tickets/recent` → 200
-
-The caller's own tickets issued in the last 24 hours, newest first, at most
-50. **Without the token**: print through `GET /payments/:paymentId` (first
-print) or reprint.
-
-```json
-[{ "id": "uuid", "paymentId": "uuid", "ticketNumber": "K7MP-3QZ9", "state": "ACTIVE",
-   "categoryName": "Car", "amountKobo": 50000, "customerName": null,
-   "paidAt": "...", "validUntil": "...", "issuedAt": "..." }]
-```
-
-### `POST /tickets/reprint` → 200
-
-```json
-{ "ticketId": "uuid" }
-```
-
-or
-
-```json
-{ "ticketNumber": "k7mp3qz9" }
-```
-
-- Exactly one of the two (400 otherwise). The number is case-insensitive, hyphen optional.
-- **Any entry operator of the site** may reprint; the same QR is returned (the ticket view).
-- **ACTIVE tickets only.** Used, expired, unknown and malformed all get the
-  same 404 `No active ticket found`, and nothing is audited.
-- Audited: `TICKET_REPRINTED` by the reprinting operator, detail
-  `{ ticketNumber, via: "id" | "number", issuedBy: { id, username } }`.
-
----
-
 ## Scans: validate and check
 
-Written before the code (Sprint 3). Both routes take the scanned text and the
-app's installation id, and **every request that reaches a scan result writes
-one `scan_event`** (gate, operator, `device_ref`, database time; the ticket
-when one was found). A request refused before that (401, 403, a 400 for a bad
-body or header, or a gate refusal) is not a scan and writes nothing.
-
-### Request (both routes)
-
-Header: `X-Device-Id: <installation id>` (1–64 of `A-Z a-z 0-9 _ -`). Missing
-or invalid: 400, nothing written.
+Both routes take the scanned text, with the `X-Device-Id` header, and **every
+request that reaches a scan result writes one `scan_event`** (location,
+operator, `device_ref`, database time; the ticket when one was found). A
+request refused before that (401, 403, a 400 for a bad body, header or
+location) writes nothing.
 
 ```json
 { "token": "<the scanned text>" }
 ```
 
-- `token` must be a string of at most 2,048 characters (400 otherwise). It is
-  trimmed (a scanner may add a newline). A string that is not of the token's
-  shape (43 base64url characters) is **not** a 400: it is the result
-  `INVALID_QR`, decided before any database lookup.
-- The token is **never** echoed in a response (any status), never put in an
-  error message, never logged and never stored outside `ticket.token`. The same
-  holds for the `X-Device-Id` value in a 400.
+`token`: a string of at most 2,048 characters (400 otherwise), trimmed. A
+string not of the token's shape is the result `INVALID_QR`, decided before any
+database lookup.
 
-### `POST /tickets/validate` (EXIT_OPERATOR) → 200
+### `POST /tickets/validate` (EXIT_OPERATOR, at an in-service EXIT gate) → 200
 
-Closes the ticket. The operator's gate must be in service and face EXIT (400
-otherwise, nothing written).
-
-One conditional statement does it, on the **database clock**:
+ONE conditional statement, on the database clock:
 
 ```sql
-UPDATE ticket SET status = 'USED', used_at = now(), used_gate_id = $gate, used_by_id = $operator
-WHERE site_id = $site AND token = $1 AND status = 'ACTIVE' AND valid_until >= now()
+UPDATE ticket SET validation_status = 'VALIDATED', validated_at = now(), validated_gate_id = $gate, validated_by_id = $operator
+WHERE site_id = $site AND token = $1
+  AND payment_status = 'PAID' AND validation_status = 'NOT_VALIDATED' AND now() < valid_until
 RETURNING ...
 ```
 
 Of any number of simultaneous validations of one ticket, exactly one is
-`VALID`; the rest are `ALREADY_USED`. The update and the scan record commit
-together or not at all. If the update changed nothing, a read (which never
-writes) decides between `ALREADY_USED`, `EXPIRED` and `NOT_FOUND`.
+`VALID`. The update and the scan record commit together. If the update changed
+nothing, one read (which never writes) decides, in this order:
 
-### `POST /tickets/check` (ENTRY_OPERATOR, EXIT_OPERATOR) → 200
+1. VALIDATED → `ALREADY_USED`
+2. expired → `EXPIRED`
+3. UNPAID → `PAYMENT_REQUIRED`
+4. no ticket → `NOT_FOUND`
+5. anything else (PAID, not validated, not expired: impossible after the update)
+   → **503 `Cannot verify`**, never VALID.
 
-**Read-only**: never changes the ticket. An entry operator's gate must be an
-in-service ENTRY gate, an exit operator's an in-service EXIT gate (400
-otherwise, nothing written). Same response shape; `ACTIVE` in place of
-`VALID`.
+### `POST /tickets/check` (all three operator jobs, each at its own kind of location) → 200
+
+**Read-only**: never changes the ticket. The same order, with `ACTIVE` (paid,
+not validated, not expired) in place of `VALID`.
 
 ### Response (both routes)
-
-Every scan outcome is **200** with a `result`. `scannedAt` is the scan
-record's database time.
 
 | `result` | Route | Screen | Extra fields |
 |---|---|---|---|
 | `VALID` | validate | Green "Valid — allow exit" | `ticket` |
-| `ACTIVE` | check | Paid, not used, still valid | `ticket` (with `validUntil`) |
+| `ACTIVE` | check | Paid, not used, valid today | `ticket` |
+| `PAYMENT_REQUIRED` | both | Red "Payment required — go to the payment booth" (the booth shows "Take payment ₦N") | `ticket` |
 | `ALREADY_USED` | both | Red "Already used" | `usedAt`, `usedGate`, `usedBy`, `usedByYou`, `ticket` |
 | `EXPIRED` | both | Red "Expired" | `validUntil`, `ticket` |
 | `NOT_FOUND` | both | Red "Ticket not found" | none |
 | `INVALID_QR` | both | Red "Not one of our tickets" | none |
 
+`ticket` is the ticket summary (never the token). `scannedAt` is the scan
+record's database time.
+
 ```json
-{ "result": "VALID", "scannedAt": "2026-11-06T09:15:02.123Z",
-  "ticket": { "ticketNumber": "K7MP-3QZ9", "categoryName": "Car", "customerName": "Ada Obi",
-              "paidAt": "...", "validUntil": "..." } }
-
 { "result": "ALREADY_USED", "scannedAt": "...",
-  "usedAt": "2026-11-06T09:15:02.123Z",
-  "usedGate": { "code": "EXIT_1", "name": "Exit 1" },
-  "usedBy": { "name": "Exit operator 1", "username": "exit-1" },
-  "usedByYou": false,
-  "ticket": { ... } }
-
-{ "result": "EXPIRED", "scannedAt": "...", "validUntil": "...", "ticket": { ... } }
-
-{ "result": "NOT_FOUND", "scannedAt": "..." }
-{ "result": "INVALID_QR", "scannedAt": "..." }
+  "usedAt": "...", "usedGate": { "code": "EXIT_1", "name": "Exit 1" },
+  "usedBy": { "name": "...", "username": "exit-1" }, "usedByYou": false,
+  "ticket": { ...summary... } }
 ```
 
-- `usedByYou` is true when the calling operator is the one who closed the
-  ticket.
-- **A retry is never re-approved.** If the `VALID` reply was lost (the
-  connection dropped) and the operator scans again, the answer is
-  `ALREADY_USED` with `usedByYou: true` and the original `usedAt`: the ticket
-  was closed by the first request. The app shows it as such; it never turns it
-  into "Valid".
-- Expiry: a ticket is valid while `now() <= valid_until` (database time).
+- `usedByYou` is true when the calling operator closed the ticket. **A retry
+  is never re-approved**: if a `VALID` reply was lost and the operator scans
+  again, the answer is `ALREADY_USED` with `usedByYou: true`.
 
 ### Errors
 
 | Status | When | App shows |
 |---|---|---|
-| 400 | bad body or header, or the operator's gate does not allow it | the message |
+| 400 | bad body or header, or the operator's location does not allow it | the message |
 | 401 / 403 | not signed in / wrong role | sign-in / refusal |
-| 503 `Cannot verify` | the backend cannot decide safely (for example, it read the ticket as still valid after the closing update changed nothing) | Grey "Cannot verify"; **never** "Valid" |
+| 503 `Cannot verify` | the backend cannot decide safely | Grey "Cannot verify"; **never** "Valid" |
 | 5xx, or no connection | anything else | Grey "Cannot verify — no connection"; never "Valid" |
 
 There is no offline approval and no bypass: only a `VALID` result from this
