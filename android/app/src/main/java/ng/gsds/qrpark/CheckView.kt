@@ -10,6 +10,8 @@ sealed interface CheckReply {
         val usedGateName: String? = null,
         val usedByName: String? = null,
         val usedByYou: Boolean = false,
+        /** The ticket summary (never the token); the booth acts on its id. */
+        val ticket: BoothTicket? = null,
     ) : CheckReply
 
     /** 400: the backend's message (for example the location does not allow it). */

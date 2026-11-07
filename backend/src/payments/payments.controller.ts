@@ -1,6 +1,6 @@
-import { Body, Controller, Get, Headers, Param, Post, Res } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpCode, Param, Post, Res } from '@nestjs/common';
 import type { Response } from 'express';
-import { IsString, Matches, MaxLength, ValidateIf } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, Matches, MaxLength, ValidateIf } from 'class-validator';
 import { CurrentActor, Roles, type Actor } from '../auth/auth.guard';
 import { deviceRef } from '../device-id';
 import { PaymentsService } from './payments.service';
@@ -23,6 +23,12 @@ class BoothPaymentDto {
 
   @IsString() @Matches(IDEMPOTENCY_KEY_PATTERN, { message: 'idempotencyKey must be 16-100 of A-Z a-z 0-9 _ -' })
   idempotencyKey!: string;
+}
+
+class CancelDto {
+  /** Only counts when Paystack could not be reached. */
+  @IsOptional() @IsBoolean({ message: 'force must be true or false' })
+  force?: boolean;
 }
 
 @Controller('payments')
@@ -55,6 +61,18 @@ export class PaymentsController {
     const { created, payment } = await this.payments.startCard(actor, body, deviceRef(device));
     res.status(created ? 201 : 200);
     return payment;
+  }
+
+  /**
+   * Cancel the caller's own PENDING card payment (docs/api.md). Always 200
+   * with the outcome, except: 404 not theirs, 409 too early or succeeded,
+   * 503 Paystack unreachable without force.
+   */
+  @Roles('PAYMENT_OPERATOR')
+  @Post(':id/cancel')
+  @HttpCode(200)
+  cancel(@Param('id') id: string, @Body() body: CancelDto, @CurrentActor() actor: Actor) {
+    return this.payments.cancel(actor, id, body?.force === true);
   }
 
   @Roles('PAYMENT_OPERATOR')

@@ -41,32 +41,78 @@
                 android:orientation="vertical"
                 android:padding="16dp">
 
-                <TextView
+                <!-- The picker: shown only while no attempt is open. -->
+                <LinearLayout
+                    android:id="@+id/pickerGroup"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/vehicle_type"
-                    android:textAppearance="@style/TextAppearance.QrPark.Caption" />
+                    android:orientation="vertical">
 
-                <Spinner
-                    android:id="@+id/categoryPicker"
-                    android:layout_width="match_parent"
-                    android:layout_height="56dp"
-                    android:layout_marginTop="4dp" />
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/vehicle_type"
+                        android:textAppearance="@style/TextAppearance.QrPark.Caption" />
 
-                <TextView
-                    android:id="@+id/fee"
+                    <Spinner
+                        android:id="@+id/categoryPicker"
+                        android:layout_width="match_parent"
+                        android:layout_height="56dp"
+                        android:layout_marginTop="4dp" />
+
+                    <TextView
+                        android:id="@+id/fee"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:textAppearance="@style/TextAppearance.QrPark.Figure" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/newTicketButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:minHeight="72dp"
+                        android:text="@string/new_ticket" />
+                </LinearLayout>
+
+                <!-- A4a-1: while an attempt is open, only this panel. -->
+                <LinearLayout
+                    android:id="@+id/unfinishedPanel"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:textAppearance="@style/TextAppearance.QrPark.Figure" />
+                    android:orientation="vertical"
+                    android:visibility="gone">
 
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/newTicketButton"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:minHeight="72dp"
-                    android:text="@string/new_ticket" />
+                    <TextView
+                        android:id="@+id/unfinishedTitle"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:textAppearance="@style/TextAppearance.QrPark.Headline" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="@string/unfinished_note"
+                        android:textAppearance="@style/TextAppearance.QrPark.Caption" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/finishButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:minHeight="72dp"
+                        android:text="@string/finish_ticket" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/discardButton"
+                        style="@style/Widget.QrPark.Button.Outlined"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/discard_ticket" />
+                </LinearLayout>
 
                 <TextView
                     android:id="@+id/message"

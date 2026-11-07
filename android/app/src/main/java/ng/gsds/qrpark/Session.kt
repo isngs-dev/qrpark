@@ -21,6 +21,9 @@ class Session(context: Context) {
 
     val attempts = EntryAttempts(StoredAttempt(store))
 
+    /** The booth's cash and card attempts (Sprint 4b). */
+    val payments = PaymentAttempts(StoredPayment(store))
+
     val accessToken: String? get() = store[SecureStore.Slot.ACCESS]
     val refreshToken: String? get() = store[SecureStore.Slot.REFRESH]
     val username: String get() = store[SecureStore.Slot.USERNAME].orEmpty()
@@ -54,6 +57,7 @@ class Session(context: Context) {
         store[SecureStore.Slot.SITE_NAME] = body.optJSONObject("site")?.optString("displayName")
         // Another account's open attempt is discarded; this account's is kept.
         attempts.onSignedIn(username)
+        payments.onSignedIn(username)
     }
 
     /**
@@ -63,6 +67,7 @@ class Session(context: Context) {
      */
     fun logOut() {
         TicketHolder.current = null
+        ScanHand.clear()
         store.clear(
             listOf(
                 SecureStore.Slot.ACCESS, SecureStore.Slot.REFRESH, SecureStore.Slot.USERNAME, SecureStore.Slot.NAME, SecureStore.Slot.ROLE,

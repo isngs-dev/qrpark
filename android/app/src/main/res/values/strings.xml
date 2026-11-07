@@ -23,7 +23,10 @@
     <string name="new_ticket">New ticket</string>
     <string name="creating_ticket">Creating the ticket…</string>
     <string name="fee_is">Fee %1$s</string>
-    <string name="open_attempt">An unfinished %1$s ticket: tap New ticket to finish it. It will not make a second ticket.</string>
+    <string name="unfinished_note">This ticket was asked for but not received. Finishing it never makes a second ticket.</string>
+    <string name="finish_ticket">Finish this ticket</string>
+    <string name="discard_ticket">Discard and start a new one</string>
+    <string name="discard">Discard</string>
     <string name="loading_categories">Loading vehicle types…</string>
     <string name="no_categories">No vehicle types are on offer. Ask the admin.</string>
     <string name="reload">Reload</string>
@@ -56,6 +59,39 @@
     <string name="check">Check</string>
     <string name="checking">Checking…</string>
     <string name="nothing_to_check">Scan or type a ticket first.</string>
+
+    <!-- Booth -->
+    <string name="booth_mode">Payment booth</string>
+    <string name="unpaid">Unpaid</string>
+    <string name="scan_ticket">Scan the ticket</string>
+    <string name="scan_with_camera">Scan with camera</string>
+    <string name="cash">Cash</string>
+    <string name="card">Card</string>
+    <string name="open_checkout">Open the card checkout again</string>
+    <string name="cancel_payment">Cancel payment</string>
+    <string name="cancel_anyway">Cancel anyway</string>
+    <string name="keep_waiting">Keep waiting</string>
+    <string name="try_card_again">Try card again</string>
+    <string name="take_cash">Take cash</string>
+    <string name="next_ticket">Next ticket</string>
+    <string name="starting_card">Starting the card payment…</string>
+    <string name="confirming_cash">Confirming the cash…</string>
+    <string name="cancelling">Asking Paystack, then cancelling…</string>
+    <string name="checkout_not_opened">The card checkout could not be opened on this device.</string>
+    <string name="card_elsewhere">A card payment for this ticket is in progress at another booth. Wait for it to end.</string>
+    <string name="resuming_card">A card payment for this ticket is already in progress: following it.</string>
+    <string name="ticket_not_found">Ticket not found</string>
+    <string name="not_ours">Not one of our tickets</string>
+    <string name="already_used">Already used</string>
+    <string name="expired">Expired: issued on an earlier day. No payment is taken.</string>
+    <string name="cannot_confirm_title">Cannot be confirmed</string>
+
+    <!-- Camera -->
+    <string name="close">Close</string>
+    <string name="point_at_ticket">Point the camera at the ticket\'s QR.</string>
+    <string name="camera_denied">The camera is not allowed. Type the ticket or use Find by number.</string>
+    <string name="camera_failed">The camera could not start (%1$s). Type the ticket or use Find by number.</string>
+    <string name="open_camera_setting">Allow the camera</string>
 
     <!-- Holding -->
     <string name="holding_note">This app does not have this job yet. Nothing can be done here.</string>

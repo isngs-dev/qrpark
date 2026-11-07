@@ -87,6 +87,16 @@ validated; the same QR; audited (who reprinted, who issued it).
      confirms (signed webhook, or a verify call). FAILED or ABANDONED is said
      plainly and the operator can choose again; still pending says "Not
      confirmed yet" and keeps checking.
+   - **Cancel payment** (Sprint 4b): if the customer gives up on the card, the
+     operator taps **Cancel payment**, offered 60 seconds after the payment
+     started (the backend refuses earlier and says when). The backend asks
+     Paystack once: if the customer did pay, the ticket is PAID and nothing is
+     cancelled; if not, the payment is ABANDONED. If Paystack cannot be
+     reached, the screen warns that it cannot be confirmed, and the operator
+     may confirm the cancel anyway. Then **Try card again** (a new attempt) or
+     **Take cash**. Every cancel is recorded with the operator. A card payment
+     that Paystack confirms after a cancel still makes the ticket PAID (or is
+     recorded as a duplicate to refund, if cash was taken).
 5. The customer keeps the same ticket and goes to the exit.
 
 Rules at the booth:

@@ -100,3 +100,28 @@ Written new for 4a, not copied: `SecureStore.kt` and `Envelope.kt` (Keystore
 AES-GCM storage), `EntryAttempt.kt`, `NewTicketFlow.kt`, `Naira.kt`,
 `Modes.kt`, `CheckView.kt`, `DeviceId.kt`, `UiBits.kt`, the activities other
 than sign-in, and their tests.
+
+## Copied in Sprint 4b (from eparking 359c0c1)
+
+The booth's scanner. eparking itself was not changed. eparking's WebView
+checkout (`CheckoutSheet.kt`, `CheckoutPage.kt`, `CheckoutNavigation.kt`) and
+`VisitPayment.kt` are **not** copied: the booth opens Paystack's checkout in the
+system browser, and its payment rules are this app's own (`BoothRules.kt`).
+
+| qrpark file | Source in eparking | What changed |
+|---|---|---|
+| `android/app/src/main/java/ng/gsds/qrpark/ScanBurst.kt` | `android/dispenser/.../ScanBurst.kt` | Package; the log-line helpers (`keyKind`, `scannerKeyLogLine`, `burstLogLine`) removed; gate wording in comments made general |
+| `android/app/src/main/java/ng/gsds/qrpark/ScannerKeys.kt` | `android/dispenser/.../ScannerKeys.kt` | Package; the vendor-only key logging removed (no `Log` call left) |
+| `android/app/src/main/java/ng/gsds/qrpark/ScanFill.kt` | `android/dispenser/.../ScanFill.kt` | Package; `CodeScanner` (with `Unready`) dropped; the `ScannerKind` comment points at this app's chooser |
+| `android/app/src/main/java/ng/gsds/qrpark/ScanTextField.kt` | `android/dispenser/.../ScanTextField.kt` | Package only |
+| `android/app/src/main/java/ng/gsds/qrpark/QrDecoder.kt` | `android/dispenser/.../Hardware.kt` (`object QrDecoder` only) | The twin note removed |
+| `android/app/src/main/java/ng/gsds/qrpark/ScanScreenState.kt` | `android/pos/.../ScanScreenState.kt` | Package only |
+| `android/app/src/main/java/ng/gsds/qrpark/ScanActivity.kt` | `android/pos/.../ScanActivity.kt` | The scan goes to `ScanHand` (memory) and the screen closes: eparking put the token in an Intent extra, which this app forbids; the manual-entry dialog dropped (the booth's own field takes typing); `QrDecoder` in place of `QrCodec`; the camera chosen by capability (`scannerKind`) |
+| `android/app/src/main/res/layout/activity_scan.xml` | `android/pos/app/src/main/res/layout/activity_scan.xml` | Manual-entry button replaced by Close |
+| `android/app/src/test/java/ng/gsds/qrpark/ScanBurstTest.kt` | `android/dispenser/app/src/test/.../ScanBurstTest.kt` | Package; the log-line test removed with the log helpers |
+| `android/app/src/test/java/ng/gsds/qrpark/ScanFillTest.kt` | `android/dispenser/app/src/test/.../ScanFillTest.kt` | Package only |
+| `android/app/src/test/java/ng/gsds/qrpark/ScanScreenStateTest.kt` | `android/pos/app/src/test/.../ScanScreenStateTest.kt` | Package only |
+
+Written new for 4b, not copied: `BoothRules.kt`, `PaymentAttempts.kt`,
+`BoothActivity.kt`, `EntryPanel.kt` (A4a-1), their tests, and the backend's
+`POST /payments/:id/cancel`.

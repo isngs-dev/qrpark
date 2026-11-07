@@ -62,6 +62,13 @@ class EntryAttempts(
         return OpenAttempt(username, key, categoryCode).also(store::save)
     }
 
+    /** The operator discarded [username]'s open attempt. False when there was none. */
+    fun discard(username: String): Boolean {
+        if (open(username) == null) return false
+        store.clear()
+        return true
+    }
+
     /** Ends [attempt] when [outcome] ends it, and only if it is still the open one. */
     fun finish(attempt: OpenAttempt, outcome: CreateOutcome) {
         if (!endsAttempt(outcome)) return

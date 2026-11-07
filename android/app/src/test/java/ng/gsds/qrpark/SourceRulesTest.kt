@@ -86,9 +86,37 @@ class SourceRulesTest {
         // TicketPrint writes the PDF to the print system's descriptor, not a file of ours.
         assertTrue(code.getValue("TicketPrint.kt").contains("FileOutputStream(destination.fileDescriptor)"))
         assertEquals(
-            listOf("ACCESS", "ATTEMPT", "DEVICE_ID", "GATE_CODE", "GATE_KIND", "GATE_NAME", "NAME", "REFRESH", "ROLE", "SITE_NAME", "USERNAME"),
+            listOf("ACCESS", "ATTEMPT", "DEVICE_ID", "GATE_CODE", "GATE_KIND", "GATE_NAME", "NAME", "PAY_ATTEMPT", "REFRESH", "ROLE", "SITE_NAME", "USERNAME"),
             SecureStore.Slot.values().map { it.name }.sorted(),
         )
+    }
+
+    @Test
+    fun `the camera hands its scan over in memory, never in an Intent or a result`() {
+        val scan = stripComments(java.io.File("src/main/java/ng/gsds/qrpark/ScanActivity.kt").readText())
+        assertFalse("ScanActivity puts nothing in an Intent", Regex("""putExtra|putExtras|setData|Bundle\(""").containsMatchIn(scan))
+        assertFalse("ScanActivity returns no data", Regex("""setResult\s*\([^)]*,""").containsMatchIn(scan))
+        assertTrue("it hands over through ScanHand", scan.contains("ScanHand.put("))
+        val booth = stripComments(java.io.File("src/main/java/ng/gsds/qrpark/BoothActivity.kt").readText())
+        assertFalse("the booth reads no scan from an Intent", Regex("""getStringExtra|getExtras|\.data\b|getParcelable""").containsMatchIn(booth))
+        assertFalse("the booth puts nothing scanned in an Intent", Regex("""putExtra\s*\([^)]*(?i:scan|token|code|checkout|url)""").containsMatchIn(booth))
+    }
+
+    @Test
+    fun `the booth's scan field never shows what was scanned (a token)`() {
+        val layout = java.io.File("src/main/res/layout/activity_booth.xml").readText()
+        val field = Regex("""<ng\.gsds\.qrpark\.ScanTextField[\s\S]*?/>""").find(layout)?.value.orEmpty()
+        assertTrue(field, field.contains("android:id=\"@+id/scanField\""))
+        assertTrue(field, field.contains("textPassword"))
+        assertTrue(field, field.contains("android:importantForAutofill=\"no\""))
+    }
+
+    @Test
+    fun `the checkout address is opened only through the Paystack check, and never stored`() {
+        val booth = stripComments(java.io.File("src/main/java/ng/gsds/qrpark/BoothActivity.kt").readText())
+        assertTrue(booth.contains("checkoutToOpen("))
+        assertFalse(Regex("""Uri\.parse\((?!url\))""").containsMatchIn(booth))
+        assertFalse(SecureStore.Slot.values().any { it.name.contains("URL") || it.name.contains("CHECKOUT") || it.name.contains("TOKEN") })
     }
 
     @Test

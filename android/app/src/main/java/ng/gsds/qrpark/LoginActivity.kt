@@ -27,6 +27,7 @@ class LoginActivity : AppCompatActivity() {
 
         if (session.isSignedIn) {
             session.attempts.onSignedIn(session.username)
+            session.payments.onSignedIn(session.username)
             openHome(session)
             return
         }

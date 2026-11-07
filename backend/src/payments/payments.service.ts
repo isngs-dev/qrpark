@@ -276,6 +276,106 @@ export class PaymentsService {
     return this.view(this.prisma, payment);
   }
 
+  // ---------------------------------------------------------------- cancel
+
+  /**
+   * "Cancel payment" at the booth (closes T7). The operator's own PENDING
+   * card payment, at least CANCEL_AFTER_SECONDS after it started (database
+   * clock). Paystack is asked once, outside any lock:
+   *   paid          -> settled as normal; "already paid", nothing cancelled
+   *   failed        -> FAILED
+   *   not paid, or no such transaction -> ABANDONED, the ticket untouched
+   *   no answer     -> 503 "cannot be confirmed", unless force: then ABANDONED
+   * force counts only when Paystack could not be reached.
+   *
+   * The write locks the ticket row, then the payment (the order everywhere),
+   * and re-reads the payment there: a webhook that settled it meanwhile wins
+   * and nothing is cancelled. A Paystack SUCCESS after a cancel still settles
+   * it (LATE_SUCCESS, or DUPLICATE if the ticket was paid otherwise).
+   */
+  async cancel(actor: Actor, id: string, force: boolean): Promise<CancelResult> {
+    const siteId = await this.site.getId();
+    await locationFor(this.prisma, actor, siteId, 'BOOTH');
+    const payment = UUID.test(id)
+      ? await this.prisma.payment.findFirst({ where: { id, siteId, operatorId: actor.id, method: 'CARD' } })
+      : null;
+    if (!payment) throw new NotFoundException('Unknown payment');
+
+    if (payment.status === 'SUCCESS' || payment.status === 'DUPLICATE') {
+      throw new ConflictException('This payment succeeded; it cannot be cancelled.');
+    }
+    if (payment.status !== 'PENDING') {
+      return { outcome: 'ALREADY_ENDED', forced: false, payment: await this.view(this.prisma, payment) };
+    }
+
+    const [age] = await this.prisma.$queryRaw<Array<{ allowed_at: Date; allowed: boolean }>>`
+      SELECT created_at + make_interval(secs => ${CANCEL_AFTER_SECONDS}) AS allowed_at,
+             now() >= created_at + make_interval(secs => ${CANCEL_AFTER_SECONDS}) AS allowed
+        FROM payment WHERE id = ${payment.id}::uuid`;
+    if (!age.allowed) {
+      throw new ConflictException({
+        statusCode: 409,
+        message: `A card payment can be cancelled ${CANCEL_AFTER_SECONDS} seconds after it started.`,
+        allowedAt: age.allowed_at,
+      });
+    }
+
+    const answer = await this.gateway.verify(payment.reference);
+    if (answer.kind === 'success' && answer.data) {
+      const settled = await this.settlement.settleSuccess(payment.reference, answer.data, 'verify');
+      const now = await this.prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+      if (settled === 'amount-mismatch') {
+        throw new ConflictException('Paystack reports a payment that does not match this ticket. Not cancelled; tell the administrator.');
+      }
+      return { outcome: 'ALREADY_PAID', forced: false, payment: await this.view(this.prisma, now) };
+    }
+    if (answer.kind === 'failed') {
+      await this.settlement.markFailed(payment.reference, answer.data ?? {});
+      const now = await this.prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+      return { outcome: now.status === 'FAILED' ? 'FAILED' : outcomeOf(now.status), forced: false, payment: await this.view(this.prisma, now) };
+    }
+    const forced = answer.kind === 'unknown';
+    if (forced && !force) {
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        message:
+          'Paystack could not be reached, so it cannot be confirmed that the customer has not paid. ' +
+          'Cancel anyway only if the customer did not pay by card.',
+        outcome: 'unknown',
+        canForce: true,
+      });
+    }
+
+    const result = await this.prisma.$transaction(
+      async (tx) => {
+        const ticket = await this.lockTicket(tx, payment.ticketId);
+        const [{ status }] = await tx.$queryRaw<Array<{ status: Payment['status'] }>>`
+          SELECT status::text AS status FROM payment WHERE id = ${payment.id}::uuid FOR UPDATE`;
+        if (status !== 'PENDING') return { cancelled: false, status, ticketNumber: ticket.ticket_number };
+        await tx.payment.update({ where: { id: payment.id }, data: { status: 'ABANDONED' } });
+        await this.audit.record({
+          client: tx,
+          actorId: actor.id,
+          action: 'PAYMENT_CANCELLED',
+          targetType: 'payment',
+          targetId: payment.id,
+          detail: { ticketNumber: ticket.ticket_number, forced },
+        });
+        return { cancelled: true, status: 'ABANDONED' as const, ticketNumber: ticket.ticket_number };
+      },
+      { timeout: 15_000 },
+    );
+    const now = await this.prisma.payment.findUniqueOrThrow({ where: { id: payment.id } });
+    if (!result.cancelled) {
+      return { outcome: outcomeOf(result.status), forced: false, payment: await this.view(this.prisma, now) };
+    }
+    this.logger.log(
+      `Payment ${payment.reference} for ticket ${result.ticketNumber} CANCELLED at the booth by ${actor.id}` +
+        (forced ? ' (forced: Paystack could not be reached)' : ''),
+    );
+    return { outcome: 'CANCELLED', forced, payment: await this.view(this.prisma, now) };
+  }
+
   // --------------------------------------------------------------- shared
 
   /** Exactly one of token or ticketId. Unknown or malformed: the same 404. */
@@ -414,6 +514,24 @@ export interface PaymentView {
   authorizationUrl: string | null;
   accessCode: string | null;
   ticket: TicketSummary;
+}
+
+/** The wait before a card payment may be cancelled (Sprint 4b review: 60 seconds). */
+export const CANCEL_AFTER_SECONDS = 60;
+
+export interface CancelResult {
+  /** CANCELLED: now ABANDONED. ALREADY_PAID: Paystack had it paid (settled). ALREADY_ENDED: it had left PENDING. */
+  outcome: 'CANCELLED' | 'ALREADY_PAID' | 'ALREADY_ENDED' | 'FAILED';
+  /** True only when Paystack could not be reached and force was given. */
+  forced: boolean;
+  payment: PaymentView;
+}
+
+/** A payment found already out of PENDING under the lock. */
+function outcomeOf(status: Payment['status']): CancelResult['outcome'] {
+  if (status === 'SUCCESS' || status === 'DUPLICATE') return 'ALREADY_PAID';
+  if (status === 'FAILED') return 'FAILED';
+  return 'ALREADY_ENDED';
 }
 
 function subjectOf(ticketId: string, method: Method): string {

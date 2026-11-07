@@ -57,6 +57,7 @@ const ROUTES: Record<string, Access> = {
   'POST /payments/cash': PAYMENT,
   'POST /payments/card': PAYMENT,
   'GET /payments/:id': PAYMENT,
+  'POST /payments/:id/cancel': PAYMENT,
   'POST /paystack/webhook': 'SIGNED',
   'POST /tickets/validate': EXIT,
   'POST /tickets/check': OPERATORS,

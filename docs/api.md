@@ -4,7 +4,7 @@
 in the same commit as any endpoint change. If it and the code disagree, say
 which is wrong.
 
-Created: Sprint 1. Last change: Sprint R (the booth flow: tickets at entry, cash and card at the booth, exit requires PAID). The access column is enforced by the global guard and
+Created: Sprint 1. Last change: Sprint 4b (`POST /payments/:id/cancel`). Before that, Sprint R (the booth flow: tickets at entry, cash and card at the booth, exit requires PAID). The access column is enforced by the global guard and
 pinned by `backend/src/auth/routes.lifecycle.test.ts`, which fails if a route
 is added without being listed there.
 
@@ -70,6 +70,7 @@ is added without being listed there.
 | `POST /payments/cash` | | | | yes | |
 | `POST /payments/card` | | | | yes | |
 | `GET /payments/:id` | | | | yes (own) | |
+| `POST /payments/:id/cancel` | | | | yes (own) | |
 | `POST /paystack/webhook` | signed | | | | |
 | `POST /tickets/check` | | | yes | yes | yes |
 | `POST /tickets/validate` | | | | | yes |
@@ -474,6 +475,48 @@ in `authorizationUrl` / `accessCode`.
 The caller's own payment; any other id is 404. Poll it until `status` is not
 PENDING. `authorizationUrl` and `accessCode` only while PENDING. The ticket
 summary, never the token.
+
+### `POST /payments/:id/cancel` (PAYMENT_OPERATOR, own, at an in-service BOOTH) → 200
+
+Sprint 4b; closes T7. Cancels the caller's own **PENDING card** payment when the
+customer gives up on the card (then cash, or a new card payment, works at once:
+the pending slots of the ticket and the operator are free).
+
+```json
+{ "force": true }
+```
+
+The body is optional; `force` (boolean) is its only field, and it counts only
+when Paystack could not be reached.
+
+- Any other id (another operator's, a cash payment, unknown, malformed): `404 Unknown payment`.
+- **Too early**: a payment may be cancelled **60 seconds** after it started
+  (its `created_at`, database clock). Before that: `409` with
+  `{ message, allowedAt }`; Paystack is not asked.
+- Already **SUCCESS** or **DUPLICATE**: `409`, nothing changed.
+- Already **ABANDONED** or **FAILED**: `200` `outcome: "ALREADY_ENDED"`, nothing changed.
+- **PENDING**: Paystack is asked once (verify, 15 s limit), outside any lock:
+
+| Paystack says | Result |
+|---|---|
+| paid | settled as normal (SUCCESS, ticket PAID, or DUPLICATE); `outcome: "ALREADY_PAID"`; nothing cancelled |
+| failed | the payment FAILED; `outcome: "FAILED"` |
+| not paid (pending, abandoned) or no such transaction | the payment **ABANDONED**, the ticket untouched; `outcome: "CANCELLED"`, `forced: false` |
+| no answer | `503` `{ message: "...cannot be confirmed...", outcome: "unknown", canForce: true }`, still PENDING; with `force: true`: **ABANDONED**, `outcome: "CANCELLED"`, `forced: true` |
+
+The write locks the ticket row, then the payment, and re-reads the payment: if
+a webhook settled it meanwhile, nothing is cancelled (`ALREADY_PAID`).
+Audited (every cancel, forced or not, with the operator):
+`PAYMENT_CANCELLED` `{ ticketNumber, forced }`.
+
+```json
+{ "outcome": "CANCELLED", "forced": false, "payment": { ...the payment view, status ABANDONED... } }
+```
+
+A Paystack SUCCESS that arrives after a cancel still settles the payment (see
+below): LATE_SUCCESS (ticket PAID), or DUPLICATE if the ticket was paid by cash
+meanwhile. **The idempotency key of a cancelled attempt replays the cancelled
+payment**: "Try card again" needs a new key.
 
 ### How a card payment ends
 

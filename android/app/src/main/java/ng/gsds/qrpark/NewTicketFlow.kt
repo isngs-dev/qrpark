@@ -54,9 +54,9 @@ fun endsAttempt(outcome: CreateOutcome): Boolean =
     outcome is CreateOutcome.Created || outcome is CreateOutcome.Refused
 
 const val NO_CONNECTION_MESSAGE =
-    "Cannot reach the server. No ticket to print yet. Tap New ticket to try again: it will not make a second ticket."
+    "Cannot reach the server. No ticket to print yet. Try again: it will not make a second ticket."
 const val SERVER_ERROR_MESSAGE =
-    "The server had a problem. No ticket to print yet. Tap New ticket to try again: it will not make a second ticket."
+    "The server had a problem. No ticket to print yet. Try again: it will not make a second ticket."
 
 /**
  * The entry screen's New ticket button. One request at a time: a tap while
@@ -89,6 +89,20 @@ class NewTicketFlow(private val attempts: EntryAttempts) {
             ?: return null
         state = State.Sending(attempt)
         return attempt
+    }
+
+    /** "Finish this ticket": the open attempt, with its own key and type. */
+    fun finish(username: String): OpenAttempt? = tap(username, null)
+
+    /**
+     * "Discard and start a new one" (after the operator confirmed): ends this
+     * account's open attempt. Refused while its request is in flight.
+     */
+    fun discard(username: String): Boolean {
+        if (state is State.Sending) return false
+        val done = attempts.discard(username)
+        if (done) state = State.Idle
+        return done
     }
 
     fun onOutcome(attempt: OpenAttempt, outcome: CreateOutcome): State {

@@ -66,6 +66,15 @@ dependencies {
     // only: no camera bindings, nothing else pulled in.
     implementation("com.google.zxing:core:3.5.3")
 
+    // Booth (Sprint 4b): the camera scan. CameraX 1.3.4, four artifacts of one
+    // library (core, the camera2 backend, the lifecycle binding, PreviewView),
+    // as eparking 359c0c1 android/pos uses. The QR is decoded by zxing core
+    // (QrDecoder.kt). Deliberately NOT ML Kit, which needs Google Play Services.
+    implementation("androidx.camera:camera-core:1.3.4")
+    implementation("androidx.camera:camera-camera2:1.3.4")
+    implementation("androidx.camera:camera-lifecycle:1.3.4")
+    implementation("androidx.camera:camera-view:1.3.4")
+
     // JVM unit tests for the pure rule files (no Android imports), so they
     // run in seconds with no emulator and no backend.
     testImplementation("junit:junit:4.13.2")

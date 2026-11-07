@@ -5,8 +5,8 @@ import androidx.appcompat.app.AppCompatActivity
 import ng.gsds.qrpark.databinding.ActivityHoldingBinding
 
 /**
- * For every account whose job has no screen in this build (booth in 4b, exit
- * in 4c, admin in the Admin Portal). It shows the job and Sign out, and never
+ * For every account whose job has no screen in this build (exit in 4c, admin
+ * in the Admin Portal). It shows the job and Sign out, and never
  * an entry screen.
  */
 class HoldingActivity : AppCompatActivity() {
@@ -18,7 +18,7 @@ class HoldingActivity : AppCompatActivity() {
         binding.root.padForSystemBars()
         val session = Session(this)
         if (!session.isSignedIn) return openSignIn(ended = false)
-        if (session.mode.opensEntry) return openHome(session)
+        if (session.mode.opensEntry || session.mode.opensBooth) return openHome(session)
 
         binding.who.text = listOf(session.name, session.gateName).filter { it.isNotBlank() }.joinToString(" · ")
         binding.holding.text = holdingText(session.mode)

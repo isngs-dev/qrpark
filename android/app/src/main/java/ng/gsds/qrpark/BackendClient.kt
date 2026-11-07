@@ -1,5 +1,6 @@
 package ng.gsds.qrpark
 
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import org.json.JSONArray
@@ -88,7 +89,92 @@ object BackendClient {
     fun check(session: Session, scanned: String, then: (CheckReply) -> Unit) =
         authed(session, "POST", "/tickets/check", JSONObject().put("token", scanned)) { reply -> then(checkReplyOf(reply)) }
 
+    // --------------------------------------------------------------- booth
+
+    /** One payment request; [then] gets the reply and what it means for the attempt's key. */
+    fun cash(session: Session, attempt: OpenPayment, then: (PayReply, PayOutcome) -> Unit) =
+        pay(session, "/payments/cash", attempt, then)
+
+    fun startCard(session: Session, attempt: OpenPayment, then: (PayReply, PayOutcome) -> Unit) =
+        pay(session, "/payments/card", attempt, then)
+
+    private fun pay(session: Session, path: String, attempt: OpenPayment, then: (PayReply, PayOutcome) -> Unit) {
+        val body = JSONObject().put("ticketId", attempt.ticketId).put("idempotencyKey", attempt.key)
+        authed(session, "POST", path, body) { reply ->
+            val json = reply.json()
+            val paymentId = json?.optStringOrNull("paymentId")
+            val outcome = classifyPay(reply.status, paymentId != null)
+            val parsed = when {
+                reply.status == null -> PayReply.NoConnection
+                reply.status == 401 -> PayReply.SignInAgain
+                reply.ok && json != null -> PayReply.Ok(
+                    status = json.optString("status"),
+                    ticket = json.optJSONObject("ticket")?.let(::summaryOf),
+                    paymentId = json.optStringOrNull("id"),
+                    // Held in memory by the booth screen, opened only if it is Paystack's https checkout.
+                    checkoutUrl = json.optStringOrNull("authorizationUrl"),
+                )
+                reply.status == 503 && paymentId != null -> PayReply.Ok("PENDING", null, paymentId, null)
+                reply.status in 400..499 || reply.status == 502 ->
+                    PayReply.Refused(reply.status, reply.message, json?.optStringOrNull("pendingPaymentId"))
+                else -> PayReply.ServerError
+            }
+            then(parsed, outcome)
+        }
+    }
+
+    fun payment(session: Session, paymentId: String, then: (PollReply) -> Unit) =
+        authed(session, "GET", "/payments/" + Uri.encode(paymentId), null) { reply ->
+            val json = reply.json()
+            then(
+                when {
+                    reply.status == null -> PollReply.NoConnection
+                    reply.status == 404 -> PollReply.NotFound
+                    reply.ok && json != null -> PollReply.Ok(json.optString("status"), json.optJSONObject("ticket")?.let(::summaryOf))
+                    else -> PollReply.ServerError
+                },
+            )
+        }
+
+    fun cancelPayment(session: Session, paymentId: String, force: Boolean, then: (CancelReply) -> Unit) {
+        val body = if (force) JSONObject().put("force", true) else JSONObject()
+        authed(session, "POST", "/payments/" + Uri.encode(paymentId) + "/cancel", body) { reply ->
+            val json = reply.json()
+            then(
+                when {
+                    reply.status == null -> CancelReply.NoConnection
+                    reply.ok && json != null -> CancelReply.Ok(
+                        outcome = json.optString("outcome"),
+                        forced = json.optBoolean("forced", false),
+                        paymentStatus = json.optJSONObject("payment")?.optString("status").orEmpty(),
+                        ticket = json.optJSONObject("payment")?.optJSONObject("ticket")?.let(::summaryOf),
+                    )
+                    reply.status == 409 && json?.has("allowedAt") == true -> CancelReply.TooEarly(json.optStringOrNull("allowedAt"))
+                    reply.status == 503 && json?.optBoolean("canForce", false) == true -> CancelReply.CannotConfirm
+                    reply.status in 400..499 -> CancelReply.Refused(reply.message)
+                    else -> CancelReply.ServerError
+                },
+            )
+        }
+    }
+
     // ------------------------------------------------------------- parsing
+
+    /** A ticket summary (check, lookup, payment). It never carries the token. */
+    fun summaryOf(json: JSONObject): BoothTicket? = try {
+        BoothTicket(
+            id = json.getString("id"),
+            ticketNumber = json.getString("ticketNumber"),
+            categoryName = json.optString("categoryName"),
+            feeKobo = json.getLong("feeKobo"),
+            issuedAt = json.optString("issuedAt"),
+            state = json.getString("state"),
+            paymentMethod = json.optStringOrNull("paymentMethod"),
+            paidAt = json.optStringOrNull("paidAt"),
+        )
+    } catch (_: JSONException) {
+        null
+    }
 
     /** The full ticket of POST /tickets and /tickets/reprint, or null if it cannot be read. */
     fun ticketOf(json: JSONObject): IssuedTicket? = try {
@@ -125,6 +211,7 @@ object BackendClient {
             usedGateName = json.optJSONObject("usedGate")?.optStringOrNull("name"),
             usedByName = json.optJSONObject("usedBy")?.optStringOrNull("name"),
             usedByYou = json.optBoolean("usedByYou", false),
+            ticket = ticket?.let(::summaryOf),
         )
     }
 

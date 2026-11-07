@@ -32,7 +32,11 @@ fun EditText.enterNeverSubmits() {
 
 /** The account's one screen: Entry for an entry operator, otherwise the holding screen. */
 fun Activity.openHome(session: Session) {
-    val target = if (session.mode.opensEntry) EntryActivity::class.java else HoldingActivity::class.java
+    val target = when {
+        session.mode.opensEntry -> EntryActivity::class.java
+        session.mode.opensBooth -> BoothActivity::class.java
+        else -> HoldingActivity::class.java
+    }
     startActivity(Intent(this, target).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
     finish()
 }

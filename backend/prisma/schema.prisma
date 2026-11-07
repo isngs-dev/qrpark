@@ -116,6 +116,7 @@ enum AuditAction {
   TICKET_REPRINTED
   USER_DELETED
   PAYMENT_CASH_CONFIRMED
+  PAYMENT_CANCELLED // a PENDING card payment cancelled at the booth (POST /payments/:id/cancel)
 
   @@map("audit_action")
 }

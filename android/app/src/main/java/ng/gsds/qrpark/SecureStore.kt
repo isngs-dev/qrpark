@@ -11,13 +11,14 @@ import javax.crypto.SecretKey
  * The only place this app writes to disk. Every value is sealed (Envelope.kt)
  * with a key that lives in the Android Keystore and never leaves it.
  *
- * The slots are fixed. There is no slot for a ticket or its token: the token
- * is held in memory only (TicketHolder), and a ticket lost to a crash is
+ * The slots are fixed. There is no slot for a ticket, its token, a scanned
+ * code or a checkout address: those are held in memory only (TicketHolder,
+ * ScanHand, the booth screen), and a ticket or payment lost to a crash is
  * replayed by the backend from the stored idempotency key.
  */
 class SecureStore(context: Context, keys: KeyProvider = KeystoreKeys) {
 
-    enum class Slot { ACCESS, REFRESH, USERNAME, NAME, ROLE, GATE_CODE, GATE_NAME, GATE_KIND, SITE_NAME, ATTEMPT, DEVICE_ID }
+    enum class Slot { ACCESS, REFRESH, USERNAME, NAME, ROLE, GATE_CODE, GATE_NAME, GATE_KIND, SITE_NAME, ATTEMPT, PAY_ATTEMPT, DEVICE_ID }
 
     private val prefs = context.applicationContext.getSharedPreferences("qrpark_secure", Context.MODE_PRIVATE)
     private val envelope = Envelope(keys)
@@ -84,5 +85,23 @@ class StoredAttempt(private val store: SecureStore) : AttemptStore {
 
     override fun clear() {
         store[SecureStore.Slot.ATTEMPT] = null
+    }
+}
+
+/** The open booth payment attempt (ticket id and method, never a token), in the encrypted store. */
+class StoredPayment(private val store: SecureStore) : PaymentAttemptStore {
+    override fun load(): OpenPayment? {
+        val parts = store[SecureStore.Slot.PAY_ATTEMPT]?.split('\n') ?: return null
+        if (parts.size != 4 || !isValidIdempotencyKey(parts[1])) return null
+        val method = PayMethod.values().firstOrNull { it.name == parts[3] } ?: return null
+        return OpenPayment(username = parts[0], key = parts[1], ticketId = parts[2], method = method)
+    }
+
+    override fun save(attempt: OpenPayment) {
+        store[SecureStore.Slot.PAY_ATTEMPT] = listOf(attempt.username, attempt.key, attempt.ticketId, attempt.method.name).joinToString("\n")
+    }
+
+    override fun clear() {
+        store[SecureStore.Slot.PAY_ATTEMPT] = null
     }
 }

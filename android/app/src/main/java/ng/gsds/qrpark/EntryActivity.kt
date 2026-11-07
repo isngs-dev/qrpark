@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import ng.gsds.qrpark.databinding.ActivityEntryBinding
 
@@ -15,16 +16,15 @@ import ng.gsds.qrpark.databinding.ActivityEntryBinding
  *
  * The ticket is shown, and so can be printed, only when the backend returned
  * it (NewTicketFlow). With no connection or a server error the screen says
- * so and the next tap retries with the same key.
+ * so. While that attempt is open, the card shows only "Unfinished <type>
+ * ticket <fee>" with Finish and Discard (EntryPanel.kt): never the picker.
  */
 class EntryActivity : AppCompatActivity() {
-
-    private class Category(val code: String, val name: String, val priceKobo: Long)
 
     private lateinit var binding: ActivityEntryBinding
     private lateinit var session: Session
     private lateinit var flow: NewTicketFlow
-    private var categories: List<Category> = emptyList()
+    private var categories: List<CategoryPrice> = emptyList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,7 +39,9 @@ class EntryActivity : AppCompatActivity() {
         binding.whoWhere.text = getString(R.string.signed_in_as, session.name, session.gateName)
         binding.site.text = session.siteName
 
-        binding.newTicketButton.setOnClickListener { newTicket() }
+        binding.newTicketButton.setOnClickListener { send(flow.tap(session.username, chosen()?.code)) }
+        binding.finishButton.setOnClickListener { send(flow.finish(session.username)) }
+        binding.discardButton.setOnClickListener { confirmDiscard() }
         binding.reloadButton.setOnClickListener { loadCategories() }
         binding.todayButton.setOnClickListener { startActivity(TicketsActivity.today(this)) }
         binding.findButton.setOnClickListener { startActivity(TicketsActivity.lookup(this)) }
@@ -52,12 +54,13 @@ class EntryActivity : AppCompatActivity() {
             override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) = showFee()
             override fun onNothingSelected(parent: AdapterView<*>?) = showFee()
         }
+        showView()
         loadCategories()
     }
 
     override fun onResume() {
         super.onResume()
-        if (::flow.isInitialized && flow.state !is NewTicketFlow.State.Sending) showOpenAttempt()
+        if (::flow.isInitialized && flow.state !is NewTicketFlow.State.Sending) showView()
     }
 
     private fun loadCategories() {
@@ -75,7 +78,7 @@ class EntryActivity : AppCompatActivity() {
                         val c = array!!.optJSONObject(i) ?: return@mapNotNull null
                         val code = c.optStringOrNull("code") ?: return@mapNotNull null
                         if (!c.has("priceKobo")) return@mapNotNull null
-                        Category(code, c.optString("name", code), c.optLong("priceKobo"))
+                        CategoryPrice(code, c.optString("name", code), c.optLong("priceKobo"))
                     }
                     if (array == null) showLoadProblem(SERVER_ERROR_MESSAGE) else showCategories()
                 }
@@ -87,11 +90,8 @@ class EntryActivity : AppCompatActivity() {
         binding.message.text = message
         binding.reloadButton.visibility = View.VISIBLE
         binding.newTicketButton.isEnabled = false
-        // An unfinished attempt can still be retried without the list.
-        session.attempts.open(session.username)?.let {
-            binding.message.text = message + "\n\n" + getString(R.string.open_attempt, it.categoryCode)
-            binding.newTicketButton.isEnabled = true
-        }
+        // An unfinished attempt can still be finished without the list.
+        showView()
     }
 
     private fun showCategories() {
@@ -101,12 +101,12 @@ class EntryActivity : AppCompatActivity() {
         binding.newTicketButton.isEnabled = true
         binding.message.text = if (categories.isEmpty()) getString(R.string.no_categories) else ""
         showFee()
-        showOpenAttempt()
+        showView()
     }
 
     private fun codes() = categories.map { it.code }
 
-    private fun chosen(): Category? {
+    private fun chosen(): CategoryPrice? {
         val code = codeAt(binding.categoryPicker.selectedItemPosition, codes(), null) ?: return null
         return categories.firstOrNull { it.code == code }
     }
@@ -116,28 +116,50 @@ class EntryActivity : AppCompatActivity() {
         binding.fee.text = chosen()?.let { getString(R.string.fee_is, naira(it.priceKobo)) } ?: ""
     }
 
-    private fun showOpenAttempt() {
-        val open = session.attempts.open(session.username) ?: return
-        val name = categories.firstOrNull { it.code == open.categoryCode }?.name ?: open.categoryCode
-        binding.message.text = getString(R.string.open_attempt, name)
-        binding.newTicketButton.isEnabled = true
+    /** The picker, or (while an attempt is open) only the unfinished panel: EntryPanel.kt. */
+    private fun showView() {
+        val view = entryView(session.attempts.open(session.username), categories)
+        binding.pickerGroup.visibility = if (view.showsPicker) View.VISIBLE else View.GONE
+        binding.unfinishedPanel.visibility = if (view.showsPicker) View.GONE else View.VISIBLE
+        if (view is EntryView.Unfinished) binding.unfinishedTitle.text = view.title
+        val idle = flow.state !is NewTicketFlow.State.Sending
+        binding.finishButton.isEnabled = idle
+        binding.discardButton.isEnabled = idle
     }
 
-    private fun newTicket() {
-        val attempt = flow.tap(session.username, chosen()?.code)
+    private fun confirmDiscard() {
+        AlertDialog.Builder(this)
+            .setMessage(DISCARD_CONFIRM)
+            .setPositiveButton(R.string.discard) { _, _ ->
+                if (flow.discard(session.username)) {
+                    binding.message.text = ""
+                    binding.categoryPicker.setSelection(selectedRow(codes(), null))
+                    showFee()
+                }
+                showView()
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun send(attempt: OpenAttempt?) {
         if (attempt == null) {
             if (flow.state !is NewTicketFlow.State.Sending) binding.message.setText(R.string.choose_first)
             return
         }
         binding.newTicketButton.isEnabled = false
+        showView()
         binding.message.setText(R.string.creating_ticket)
         BackendClient.createTicket(session, attempt) { outcome ->
             binding.newTicketButton.isEnabled = true
-            when (val state = flow.onOutcome(attempt, outcome)) {
+            val state = flow.onOutcome(attempt, outcome)
+            showView()
+            when (state) {
                 is NewTicketFlow.State.Shown -> {
                     TicketHolder.current = state.ticket
                     binding.message.text = ""
                     binding.categoryPicker.setSelection(selectedRow(codes(), null))
+                    showFee()
                     startActivity(Intent(this, TicketActivity::class.java))
                 }
                 is NewTicketFlow.State.Failed -> binding.message.text = state.message

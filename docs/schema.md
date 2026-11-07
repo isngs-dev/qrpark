@@ -8,7 +8,8 @@ Source of truth: `backend/prisma/schema.prisma` and
 `backend/prisma/migrations/`. CI applies the migrations to an empty database
 and fails if the result differs from `schema.prisma`.
 
-Created: Sprint 1 (`0001_init`). Last change: Sprint R (`0003_booth_flow`),
+Created: Sprint 1 (`0001_init`). Last change: Sprint 4b (`0004_payment_cancelled`):
+the audit action `PAYMENT_CANCELLED`. Before that, Sprint R (`0003_booth_flow`),
 the flow of 2026-11-07: entry creates an UNPAID ticket, a payment booth takes
 cash or card, exit requires PAID.
 
@@ -41,7 +42,7 @@ cash or card, exit requires PAID.
 | `ticket_validation_status` | `NOT_VALIDATED`, `VALIDATED`. EXPIRED is derived: not validated and `now() >= valid_until` |
 | `scan_kind` | `CHECK` (read-only), `EXIT` (single-use validation) |
 | `scan_result` | `VALID` (EXIT only), `ACTIVE` (CHECK only: paid, not validated, not expired), `PAYMENT_REQUIRED`, `ALREADY_USED`, `EXPIRED`, `INVALID_QR`, `NOT_FOUND` |
-| `audit_action` | `CATEGORY_CREATED`, `CATEGORY_UPDATED`, `CATEGORY_PRICE_CHANGED`, `SETTINGS_CHANGED`, `GATE_CREATED`, `GATE_UPDATED`, `USER_CREATED`, `USER_UPDATED`, `USER_PASSWORD_RESET`, `USER_DELETED`, `TICKET_REPRINTED`, `PAYMENT_CASH_CONFIRMED` |
+| `audit_action` | `CATEGORY_CREATED`, `CATEGORY_UPDATED`, `CATEGORY_PRICE_CHANGED`, `SETTINGS_CHANGED`, `GATE_CREATED`, `GATE_UPDATED`, `USER_CREATED`, `USER_UPDATED`, `USER_PASSWORD_RESET`, `USER_DELETED`, `TICKET_REPRINTED`, `PAYMENT_CASH_CONFIRMED`, `PAYMENT_CANCELLED` |
 
 ## Functions
 
@@ -284,3 +285,4 @@ Indexes: `(site_id, occurred_at)`, `(site_id, target_type, target_id)`.
 | `0001_init` | 1 | All nine tables, the CHECKs, `payment_one_pending_per_operator`, the `audit_log_append_only` trigger (and the ticket→payment trigger, dropped in 0003) |
 | `0002_payment_window` | 2 | `site_setting.payment_window_minutes` (default 5, CHECK 1–30) |
 | `0003_booth_flow` | R | The booth flow. Refuses to run over existing ticket or payment rows (no conversion; reset and re-seed). Ticket: payment and validation status, fee snapshot, category, device, idempotency key, `issued_at` / `valid_until` by the database; `customer_name`, `validity_hours`, `payment_id`, `payment_reference` dropped. Payment: `ticket_id`, method, device; amount equals the fee; one SUCCESS / one PENDING per ticket. `lagos_day_end()`, `ticket_insert_guard`, `ticket_guard`, `payment_guard`. Roles and kinds: PAYMENT_OPERATOR, BOOTH; DUPLICATE; PAYMENT_REQUIRED; USER_DELETED, PAYMENT_CASH_CONFIRMED. `app_user.deleted_at` with a username unique among live accounts. `site_setting.validity_hours` dropped |
+| `0004_payment_cancelled` | 4b | `ALTER TYPE audit_action ADD VALUE 'PAYMENT_CANCELLED'`, for `POST /payments/:id/cancel`. Needed because `audit_action` is a Postgres enum. Nothing else changes: a cancelled payment is `ABANDONED`, and the audit row holds the operator and whether it was forced. Adds a value only, so it runs over existing data unchanged |
