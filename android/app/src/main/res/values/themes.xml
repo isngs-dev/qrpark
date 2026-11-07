@@ -1,9 +1,64 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Light, never DayNight, and dynamic colour is never applied: the device
-  wallpaper must not recolour the greens and reds that say whether a vehicle
-  may leave. The full theme is copied from eparking in Sprint 4.
+  Copied from eparking 359c0c1 android/pos/app/src/main/res/values/themes.xml.
+  Changed: Theme.QrPark renamed Theme.QrPark, the style names to QrPark,
+  this comment shortened. Light, never DayNight; dynamic colour is never
+  applied, so the device wallpaper cannot recolour a status.
 -->
-<resources>
-    <style name="Theme.QrPark" parent="Theme.Material3.Light.NoActionBar" />
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <style name="Theme.QrPark" parent="Theme.Material3.Light.NoActionBar">
+
+        <!--
+          Primary is the brand NAVY, not an amber or ochre. A filled button and
+          an amber "pending" must not read as the same kind of thing -
+          see colors.xml.
+        -->
+        <item name="colorPrimary">@color/navy</item>
+        <item name="colorOnPrimary">@color/white</item>
+        <item name="colorPrimaryContainer">@color/teal_tint</item>
+        <item name="colorOnPrimaryContainer">@color/teal_dark</item>
+
+        <item name="colorSecondary">@color/ink_soft</item>
+        <item name="colorOnSecondary">@color/paper</item>
+        <item name="colorSecondaryContainer">@color/teal_tint</item>
+        <item name="colorOnSecondaryContainer">@color/teal_dark</item>
+
+        <!-- Selected radio buttons and checkboxes, the focused field: teal, a
+             non-text use where 3:1 is the bar (4.1:1 on white). -->
+        <item name="colorControlActivated">@color/teal</item>
+
+        <!-- M3's error slot is our `bad`, so a field error and a refusal agree. -->
+        <item name="colorError">@color/bad</item>
+        <item name="colorOnError">@color/white</item>
+        <item name="colorErrorContainer">@color/bad_wash</item>
+        <item name="colorOnErrorContainer">@color/bad</item>
+
+        <item name="android:colorBackground">@color/paper</item>
+        <item name="colorOnBackground">@color/ink</item>
+        <item name="colorSurface">@color/surface</item>
+        <item name="colorOnSurface">@color/ink</item>
+        <item name="colorSurfaceVariant">@color/surface_sunk</item>
+        <item name="colorOnSurfaceVariant">@color/ink_soft</item>
+        <item name="colorOutline">@color/line</item>
+        <item name="colorOutlineVariant">@color/line_soft</item>
+
+        <!-- The bar over the top of a fixed terminal, matching the surface. -->
+        <item name="android:statusBarColor">@color/surface</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">@color/surface</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">true</item>
+
+        <!-- Type -->
+        <item name="textAppearanceHeadlineSmall">@style/TextAppearance.QrPark.Headline</item>
+        <item name="textAppearanceTitleMedium">@style/TextAppearance.QrPark.Title</item>
+        <item name="textAppearanceBodyMedium">@style/TextAppearance.QrPark.Body</item>
+        <item name="textAppearanceLabelLarge">@style/TextAppearance.QrPark.Label</item>
+
+        <!-- Defaults every screen inherits, so a button is a button everywhere. -->
+        <item name="materialButtonStyle">@style/Widget.QrPark.Button</item>
+        <item name="materialCardViewStyle">@style/Widget.QrPark.Card</item>
+        <item name="textInputStyle">@style/Widget.QrPark.TextField</item>
+    </style>
+
 </resources>

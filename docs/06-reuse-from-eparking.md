@@ -73,3 +73,30 @@ organisation name (`receipt_org_name`, else the display name) with the
 contact line (`receipt_contact_line`) beneath, both edited in the Admin Portal.
 The files are copied in the Android sprint (4a) and the portal sprint (5),
 each copy listed with its source path in that sprint's report.
+
+## Copied in Sprint 4a (from eparking 359c0c1)
+
+Every file below was copied from eparking at commit `359c0c1` and adapted;
+eparking itself was not changed. "Unchanged" means byte-identical.
+
+| qrpark file | Source in eparking | What changed |
+|---|---|---|
+| `android/app/src/main/res/drawable-nodpi/gsd_logo.png` | `android/pos/app/src/main/res/drawable-nodpi/gsd_logo.png` | Unchanged |
+| `android/app/src/main/res/drawable-nodpi/aic_logo.png` | `android/pos/app/src/main/res/drawable-nodpi/aic_logo.png` | Unchanged |
+| `android/app/src/main/java/ng/gsds/qrpark/TicketHeader.kt` | `android/pos/.../TicketHeader.kt` | Logo order, INLINE/STACKED rule and `wrapWords` kept; the fixed "E-Parking" title and `siteDisplayName()` replaced by `HeaderText` (organisation name, else display name, plus the contact line) |
+| `android/app/src/main/java/ng/gsds/qrpark/TicketPrint.kt` | `android/pos/.../CounterPrint.kt` | `CounterPrinter`/`PaperDocument`/`PaperArt` kept; one paper (the entry ticket), brand and contact lines, job and PDF names without "E-Parking", behind a `TicketPrinter` interface chosen by capability; QR drawn with zxing core |
+| `android/app/src/main/java/ng/gsds/qrpark/TicketPaper.kt` | `android/pos/.../CounterPaper.kt` | Only the ticket-reprint idea (header + one QR + monospace lines) kept; receipt, visit and pass papers dropped; naira formatting by string work only |
+| `android/app/src/main/java/ng/gsds/qrpark/CategoryPick.kt` | `android/pos/.../CategoryPick.kt` | The three functions unchanged; comments about passes reworded |
+| `android/app/src/test/java/ng/gsds/qrpark/CategoryPickTest.kt` | `android/pos/app/src/test/.../CategoryPickTest.kt` | Package and the class comment changed; the tests unchanged |
+| `android/app/src/main/java/ng/gsds/qrpark/LoginActivity.kt` | `android/pos/.../LoginActivity.kt` | Username, not email; routing by the account's job; the backend's message or a fixed sentence on failure |
+| `android/app/src/main/java/ng/gsds/qrpark/Session.kt` | `android/pos/.../Session.kt` | Plain SharedPreferences replaced by the encrypted `SecureStore`; the location (gate) and its kind kept; counter-only fields dropped; the open entry attempt and the installation id added |
+| `android/app/src/main/java/ng/gsds/qrpark/BackendClient.kt` | `android/pos/.../BackendClient.kt` | Same `HttpURLConnection` transport and one-refresh-on-401 rule; the `Log.w` removed (no logging at all); this app's routes; `X-Device-Id` on every ticket call |
+| `android/app/src/main/res/values/colors.xml`, `themes.xml`, `styles.xml`, `type.xml` | `android/pos/app/src/main/res/values/` (same names) | Names `EParking` → `QrPark`; data-series colours dropped; bundled fonts not copied (platform sans and monospace) |
+| `android/app/src/main/res/xml/network_security_config.xml` and `src/debug/res/xml/network_security_config.xml` | `android/pos/app/src/{main,release}/res/xml/network_security_config.xml` | The emulator cleartext exception moved from main into the debug source set; main (release) allows no cleartext |
+| `android/build-logic/` (`ReleaseRules.kt`, `QrparkReleasePlugin.kt`, `ReleaseRulesTest.kt`, `build.gradle.kts`, `settings.gradle.kts`) | `android/build-logic/` | Package and property names `qrpark.*`; one app, no flavours; `debugApk` (named APK + `.sha256`, previous one deleted) in place of `vendorApk` |
+| `android/BUILDING.md` | `android/BUILDING.md` | One app, `qrpark.*` properties, debug APK, emulator steps; vendor flavour sections dropped |
+
+Written new for 4a, not copied: `SecureStore.kt` and `Envelope.kt` (Keystore
+AES-GCM storage), `EntryAttempt.kt`, `NewTicketFlow.kt`, `Naira.kt`,
+`Modes.kt`, `CheckView.kt`, `DeviceId.kt`, `UiBits.kt`, the activities other
+than sign-in, and their tests.

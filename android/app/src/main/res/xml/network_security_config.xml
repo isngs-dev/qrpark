@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Every build: HTTPS only, no cleartext to any host. A release build uses this
+  file as it is. The debug source set (src/debug/res/xml) replaces it with one
+  that permits cleartext to the emulator's view of this machine only.
+
+  Adapted from eparking 359c0c1 android/pos/app/src/{main,release}/res/xml/
+  network_security_config.xml: the cleartext exception moved from main into
+  the debug source set, so a release build never carries it.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

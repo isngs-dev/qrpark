@@ -22,9 +22,9 @@ the master reference for behaviour.
 
 - `backend/`: NestJS + Prisma + PostgreSQL + Redis. The API and all rules.
 - `admin/`: Next.js + Tailwind Admin Portal (ADMIN only).
-- `android/`: one Kotlin app, Android 10+. Entry, Booth and Exit modes (the
-  mode comes from the account's role) are built in Sprint 4; today it is the
-  Sprint 0 placeholder.
+- `android/`: one Kotlin app, Android 10+. The mode comes from the account's
+  job. Sign-in and Entry mode are built (Sprint 4a); booth and exit accounts
+  see a holding screen until 4b and 4c.
 
 ## Docs
 
@@ -86,9 +86,9 @@ DATABASE_URL=postgresql://qrpark:qrpark@localhost:5433/qrpark_test REDIS_URL=red
 Admin Portal: `cd admin && npm ci && npm run dev` (http://localhost:3000;
 start it on another port if the backend is running, e.g. `npx next dev -p 3001`).
 
-Android debug build: Gradle 8.9 needs **JDK 21** (Android Studio's bundled JBR
-25 is too new). Set `JAVA_HOME` to a JDK 21, then run `gradle -p android
-assembleDebug`. The APK is `android/app/build/outputs/apk/debug/app-debug.apk`.
+Android: see `android/BUILDING.md` (JDK 21, Gradle 8.9). The debug APK is
+`android/app/build/apk/qrpark-<version>-debug.apk`; it talks to the backend
+at `http://10.0.2.2:3000` from the emulator.
 
 ## Secrets
 

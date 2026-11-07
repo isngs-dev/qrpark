@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Copied from eparking 359c0c1 android/pos/app/src/main/res/values/styles.xml.
+  Changed: names EParking to QrPark, this comment shortened. The widget
+  defaults every screen inherits.
+-->
+<resources>
+
+    <!--
+      The primary action. Navy, not amber.
+
+      56dp minimum because these are standing-operator terminals, often used
+      one-handed while the other hand holds a card or a ticket. The tallest
+      buttons in the flows - Take Payment, Admit - stay taller still; this is
+      the floor, not the target.
+    -->
+    <style name="Widget.QrPark.Button" parent="Widget.Material3.Button">
+        <item name="android:minHeight">56dp</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="cornerRadius">10dp</item>
+        <item name="android:textAppearance">@style/TextAppearance.QrPark.Label</item>
+    </style>
+
+    <!-- A secondary action beside a primary one: Cancel, Clear, Recheck. -->
+    <style name="Widget.QrPark.Button.Outlined" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="android:minHeight">56dp</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="cornerRadius">10dp</item>
+        <item name="strokeColor">@color/line</item>
+        <item name="android:textColor">@color/ink</item>
+        <item name="android:textAppearance">@style/TextAppearance.QrPark.Label</item>
+    </style>
+
+    <!-- A quiet action inside a card: a per-row link, a toggle. -->
+    <style name="Widget.QrPark.Button.Text" parent="Widget.Material3.Button.TextButton">
+        <item name="android:minHeight">48dp</item>
+        <item name="android:textColor">@color/ink</item>
+        <item name="android:textAppearance">@style/TextAppearance.QrPark.Label</item>
+    </style>
+
+    <!--
+      A destructive action. Only where something cannot be undone - a refused
+      exit, a deactivation. Red is a status colour, so a button wearing it is
+      making a claim about consequences and had better mean it.
+    -->
+    <style name="Widget.QrPark.Button.Danger" parent="Widget.QrPark.Button">
+        <item name="backgroundTint">@color/bad</item>
+        <item name="android:textColor">@color/white</item>
+    </style>
+
+    <style name="Widget.QrPark.Card" parent="Widget.Material3.CardView.Outlined">
+        <item name="cardCornerRadius">12dp</item>
+        <item name="cardBackgroundColor">@color/surface</item>
+        <item name="strokeColor">@color/line</item>
+        <item name="strokeWidth">1dp</item>
+        <item name="cardElevation">0dp</item>
+    </style>
+
+    <!--
+      Outlined text fields, with the label attached to the box.
+
+      This replaces a separate label TextView above each field and a single
+      shared error line at the bottom of the screen. An operator who mistyped a
+      plate should be told at the plate, not in a sentence under the submit
+      button.
+    -->
+    <style name="Widget.QrPark.TextField" parent="Widget.Material3.TextInputLayout.OutlinedBox">
+        <item name="boxStrokeColor">@color/teal</item>
+        <item name="boxStrokeWidth">1dp</item>
+        <item name="boxCornerRadiusTopStart">10dp</item>
+        <item name="boxCornerRadiusTopEnd">10dp</item>
+        <item name="boxCornerRadiusBottomStart">10dp</item>
+        <item name="boxCornerRadiusBottomEnd">10dp</item>
+        <item name="errorTextColor">@color/bad</item>
+        <item name="boxStrokeErrorColor">@color/bad</item>
+    </style>
+
+    <!-- A field holding something compared character by character. -->
+    <style name="Widget.QrPark.TextField.Mono" parent="Widget.QrPark.TextField">
+        <item name="android:textAppearance">@style/TextAppearance.QrPark.Mono</item>
+    </style>
+
+    <!--
+      The gate's answer.
+
+      NOT a pill. A pill is a status label inside a dense counter screen, read
+      at arm's length among other things. This is the one thing an operator at
+      a barrier needs from across a lane, outdoors, possibly in sun: a
+      full-width block of the tone's own colour with white on it. The colour
+      carries the verdict before the word is read.
+
+      Only the dispenser uses it - a counter has no barrier - but it lives here
+      because the tones it draws from are shared, and a second definition is a
+      second thing to drift.
+    -->
+    <!-- parent="" on purpose: a dotted style name implicitly inherits from its
+         prefix, and there is no Widget.QrPark to inherit from. -->
+    <style name="Widget.QrPark.Banner" parent="">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:gravity">center</item>
+        <item name="android:padding">22dp</item>
+        <item name="android:textColor">@color/white</item>
+        <item name="android:textAppearance">@style/TextAppearance.QrPark.Headline</item>
+    </style>
+
+</resources>

@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Copied from eparking 359c0c1 android/pos/app/src/main/res/values/type.xml.
+  Changed: names EParking to QrPark; the bundled Archivo and IBM Plex Mono
+  fonts are not copied (no font files in this app): headings use the
+  platform sans in bold or medium, mono uses the platform monospace.
+-->
+<resources>
+
+    <!-- A section heading, or the name of the thing on screen. -->
+    <style name="TextAppearance.QrPark.Headline" parent="TextAppearance.Material3.HeadlineSmall">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textFontWeight">700</item>
+        <item name="android:textColor">@color/ink</item>
+        <item name="android:textSize">22sp</item>
+    </style>
+
+    <style name="TextAppearance.QrPark.Title" parent="TextAppearance.Material3.TitleMedium">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textFontWeight">500</item>
+        <item name="android:textColor">@color/ink</item>
+        <item name="android:textSize">16sp</item>
+    </style>
+
+    <style name="TextAppearance.QrPark.Body" parent="TextAppearance.Material3.BodyMedium">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textColor">@color/ink</item>
+        <item name="android:textSize">15sp</item>
+    </style>
+
+    <!-- A field label, or the caption under one. -->
+    <style name="TextAppearance.QrPark.Caption" parent="TextAppearance.Material3.BodySmall">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textColor">@color/ink_soft</item>
+        <item name="android:textSize">13sp</item>
+    </style>
+
+    <style name="TextAppearance.QrPark.Label" parent="TextAppearance.Material3.LabelLarge">
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textSize">15sp</item>
+        <!-- Buttons on a terminal are read at arm's length, not shouted. -->
+        <item name="android:textAllCaps">false</item>
+    </style>
+
+    <!--
+      Anything that lines up in a column or gets compared character by
+      character. A plate read back to a customer, a reference checked against a
+      receipt, an amount said out loud.
+    -->
+    <style name="TextAppearance.QrPark.Mono" parent="TextAppearance.Material3.BodyMedium">
+        <item name="android:fontFamily">monospace</item>
+        <item name="android:textColor">@color/ink</item>
+        <item name="android:textSize">14sp</item>
+    </style>
+
+    <!-- The one big number on a screen: an amount owed, a total. -->
+    <style name="TextAppearance.QrPark.Figure" parent="TextAppearance.Material3.HeadlineMedium">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textFontWeight">700</item>
+        <item name="android:textColor">@color/ink</item>
+        <item name="android:textSize">32sp</item>
+    </style>
+
+</resources>

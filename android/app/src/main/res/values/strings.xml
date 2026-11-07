@@ -1,5 +1,62 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">QR Parking</string>
-    <string name="placeholder">QR Parking. Sign-in arrives in Sprint 4.</string>
+
+    <!-- Sign-in -->
+    <string name="sign_in_title">Sign in</string>
+    <string name="username">Username</string>
+    <string name="password">Password</string>
+    <string name="sign_in">Sign in</string>
+    <string name="signing_in">Signing in…</string>
+    <string name="enter_username_and_password">Enter your username and password.</string>
+    <string name="cannot_reach">Cannot reach the server. Check the network, then try again.</string>
+    <string name="session_ended">Your session has ended. Sign in again.</string>
+    <string name="server_at">Server: %1$s</string>
+    <string name="sign_out">Sign out</string>
+
+    <!-- Entry -->
+    <string name="entry_mode">Entry</string>
+    <string name="signed_in_as">%1$s · %2$s</string>
+    <string name="vehicle_type">Vehicle type</string>
+    <string name="choose_vehicle_type">Choose the vehicle type</string>
+    <string name="choose_first">Choose the vehicle type first.</string>
+    <string name="new_ticket">New ticket</string>
+    <string name="creating_ticket">Creating the ticket…</string>
+    <string name="fee_is">Fee %1$s</string>
+    <string name="open_attempt">An unfinished %1$s ticket: tap New ticket to finish it. It will not make a second ticket.</string>
+    <string name="loading_categories">Loading vehicle types…</string>
+    <string name="no_categories">No vehicle types are on offer. Ask the admin.</string>
+    <string name="reload">Reload</string>
+    <string name="todays_tickets">Today\'s tickets</string>
+    <string name="find_by_number">Find by number</string>
+    <string name="check_ticket">Check ticket</string>
+
+    <!-- Ticket -->
+    <string name="valid_today_only">Valid today only</string>
+    <string name="ticket_footer">Pay at the payment booth. Show this ticket at the exit.</string>
+    <string name="print">Print</string>
+    <string name="check_this_ticket">Check this ticket</string>
+    <string name="done">Done</string>
+    <string name="ticket_gone">This ticket is no longer on screen. Reprint it from Today\'s tickets.</string>
+    <string name="qr_description">The ticket\'s QR code</string>
+
+    <!-- Lists, lookup, reprint -->
+    <string name="last_characters">Last characters of the ticket number</string>
+    <string name="find">Find</string>
+    <string name="at_least_three">Type at least 3 characters.</string>
+    <string name="loading">Loading…</string>
+    <string name="not_found">Not found.</string>
+    <string name="none_today">No tickets from you today.</string>
+    <string name="reprint">Reprint</string>
+    <string name="cancel">Cancel</string>
+    <string name="reprinting">Fetching the ticket…</string>
+
+    <!-- Check -->
+    <string name="scan_or_type">Scan or type the ticket\'s QR</string>
+    <string name="check">Check</string>
+    <string name="checking">Checking…</string>
+    <string name="nothing_to_check">Scan or type a ticket first.</string>
+
+    <!-- Holding -->
+    <string name="holding_note">This app does not have this job yet. Nothing can be done here.</string>
 </resources>

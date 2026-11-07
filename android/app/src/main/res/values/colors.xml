@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Copied from eparking 359c0c1 android/pos/app/src/main/res/values/colors.xml.
+  Changed: this comment shortened, the two data-series colours (parking and
+  passes) dropped, the GSD token note shortened. The rules stay: status
+  colours (good, bad, pending) mean state and nothing else; the primary
+  action is navy, never amber. Light only, no values-night.
+-->
+<resources>
+
+    <!-- Surfaces and ink (GSD tokens): ink 15.3:1 on surface, 14.2:1 on paper. -->
+    <color name="ink">#202438</color>
+    <color name="ink_soft">#565F70</color>
+    <color name="paper">#F4F6FA</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="surface_sunk">#F8FAFC</color>
+    <color name="line">#DDE2EA</color>
+    <color name="line_soft">#EAEDF2</color>
+
+    <!--
+      Brand. NAVY is the primary action (white on it 10.9:1) and the logo's
+      own colour. TEAL is for large text, icons and outlines only - it is
+      4.1:1 on white, under the 4.5:1 small text needs - so small teal text
+      uses TEAL_DARK (6.2:1 on white, 5.5:1 on the tint). Neither is ever a
+      status: green, amber and red keep that job alone.
+    -->
+    <color name="navy">#353A62</color>
+    <color name="teal">#168A99</color>
+    <color name="teal_dark">#0E6B77</color>
+    <color name="teal_tint">#E0F5F6</color>
+
+    <!-- Disabled: a control that exists and cannot be used right now -->
+    <color name="muted">#94A3B8</color>
+    <color name="muted_wash">#F1F5F9</color>
+
+    <!--
+      Status. These are the three the apps already used, found independently in
+      45 places across the two codebases and now named once.
+    -->
+    <color name="good">#1B5E20</color>
+    <color name="good_wash">#E2F3EC</color>
+    <color name="bad">#B00020</color>
+    <color name="bad_wash">#FBE8E4</color>
+    <!-- #B26A00 was 4.2:1 on white and 3.9:1 on its wash, under AA for the
+         small text it carries. This is 6.3:1 and 5.9:1. -->
+    <color name="pending">#8A5300</color>
+    <color name="pending_wash">#FFF6E5</color>
+
+    <color name="white">#FFFFFF</color>
+
+</resources>
