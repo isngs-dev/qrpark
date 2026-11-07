@@ -12,7 +12,8 @@ import { SiteService } from '../site.service';
 import { LockService } from '../lock/lock.service';
 import { PaystackGateway } from '../paystack/paystack.gateway';
 import { windowExpired } from '../paystack/verdicts';
-import { ReconciliationService, VERIFY_FALLBACK_MS, VERIFY_SOON_MS } from '../jobs/reconciliation.service';
+import { ReconciliationService } from '../jobs/reconciliation.service';
+import { verifyDelays } from '../jobs/verify-schedule';
 import { assertCategoryInUse } from '../config/category-in-use';
 import { assertGateAcceptsEntry, assertGateInService } from '../config/gate-in-service';
 import { newPaymentReference } from '../tickets/ticket-codes';
@@ -150,7 +151,7 @@ export class PaymentsService {
         if (result.outcome === 'unknown') {
           // Paystack MAY have it. It stays PENDING (blocking a second charge)
           // and is checked within seconds.
-          await this.jobs.scheduleVerify(payment.reference, VERIFY_SOON_MS);
+          await this.scheduleChecks(siteId, payment.reference, 'unknown');
           throw new ServiceUnavailableException({
             statusCode: 503,
             message: 'Paystack did not answer. Do not take payment again; this one is being checked.',
@@ -163,7 +164,7 @@ export class PaymentsService {
           where: { id: payment.id },
           data: { authorizationUrl: result.authorizationUrl, accessCode: result.accessCode },
         });
-        await this.jobs.scheduleVerify(saved.reference, VERIFY_FALLBACK_MS);
+        await this.scheduleChecks(siteId, saved.reference, 'accepted');
         return { created: true, payment: this.view({ ...saved, ticket: null }, null) };
       },
       'take this payment',
@@ -219,6 +220,21 @@ export class PaymentsService {
       message: 'A payment is already in progress. Finish it or wait for it to be confirmed.',
       pendingPaymentId: pending.id,
     });
+  }
+
+  /**
+   * The delayed Paystack checks for a payment that may be in the customer's
+   * hands, all inside the site's payment window (verify-schedule.ts). The
+   * sweep covers anything after it.
+   */
+  private async scheduleChecks(siteId: string, reference: string, outcome: 'accepted' | 'unknown') {
+    const { paymentWindowMinutes } = await this.prisma.siteSetting.findUniqueOrThrow({
+      where: { siteId },
+      select: { paymentWindowMinutes: true },
+    });
+    for (const delay of verifyDelays(outcome, paymentWindowMinutes)) {
+      await this.jobs.scheduleVerify(reference, delay);
+    }
   }
 
   private async header(siteId: string) {

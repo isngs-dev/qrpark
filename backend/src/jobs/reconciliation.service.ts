@@ -8,8 +8,10 @@ import { SettlementService } from '../payments/settlement.service';
  * Two background jobs, both of which change a payment ONLY from Paystack's
  * answer (SettlementService.verifyAndApply):
  *
- *   verify   one delayed check after a payment starts: ~20 s, for a webhook
- *            that never came; ~3 s when Paystack did not answer at all.
+ *   verify   delayed checks after a payment starts, all inside the payment
+ *            window (verify-schedule.ts): 20, 45, 90, 150 and 240 s for a
+ *            webhook that never came, plus 3 s first when Paystack did not
+ *            answer the start. Each is its own job (the delay is in the id).
  *   sweep    every 2 minutes, every PENDING payment older than 20 s, so a
  *            lost webhook resolves and an unpaid one is ABANDONED once past
  *            the payment window.
@@ -22,7 +24,6 @@ import { SettlementService } from '../payments/settlement.service';
  */
 
 export const VERIFY_FALLBACK_MS = 20_000;
-export const VERIFY_SOON_MS = 3_000;
 const SWEEP_EVERY_MS = 2 * 60_000;
 const QUEUE = 'qrpark-payments';
 

@@ -333,7 +333,7 @@ When Paystack answers badly:
 | Paystack | Response | Payment |
 |---|---|---|
 | refuses (a clear "no") | 502 `{ message, paymentId }` | ABANDONED; the operator can start again |
-| does not answer (timeout, 5xx, unreadable) | 503 `{ message, outcome: "unknown", paymentId }` | stays PENDING (Paystack may have it); checked within ~3 s; blocks a second charge |
+| does not answer (timeout, 5xx, unreadable) | 503 `{ message, outcome: "unknown", paymentId }` | stays PENDING (Paystack may have it); checked at 3 s and then on the schedule below; blocks a second charge |
 
 ### `GET /payments/:id` → 200
 
@@ -352,9 +352,11 @@ A payment leaves PENDING only on Paystack's word:
 - **ABANDONED**: Paystack refused to start it; or Paystack has no such
   transaction and never gave us a checkout; or, past the payment window,
   Paystack says it is not paid.
-- A background check runs ~20 s after the start (in case no webhook comes),
-  and a sweep every 2 minutes checks every PENDING payment older than 20 s.
-  No answer from Paystack changes nothing.
+- Background checks ask Paystack at 20, 45, 90, 150 and 240 s after the start
+  (in case no webhook comes), **only those inside the site's payment window**;
+  when Paystack did not answer the start, a check at 3 s comes first. A sweep
+  every 2 minutes checks every PENDING payment older than 20 s. A check moves a
+  payment only on Paystack's answer: no answer changes nothing.
 - **A late SUCCESS is accepted.** If Paystack confirms a payment already
   ABANDONED or FAILED, it becomes SUCCESS, the ticket is issued (it appears in
   the operator's recent list) and a `LATE_SUCCESS` warning is logged.
