@@ -103,10 +103,10 @@ than sign-in, and their tests.
 
 ## Copied in Sprint 4b (from eparking 359c0c1)
 
-The booth's scanner. eparking itself was not changed. eparking's WebView
-checkout (`CheckoutSheet.kt`, `CheckoutPage.kt`, `CheckoutNavigation.kt`) and
-`VisitPayment.kt` are **not** copied: the booth opens Paystack's checkout in the
-system browser, and its payment rules are this app's own (`BoothRules.kt`).
+The booth's scanner. eparking itself was not changed. `VisitPayment.kt` is
+not copied: the booth's payment rules are this app's own (`BoothRules.kt`).
+(4b first opened the checkout in the system browser; the 4b fix round moved it
+inside the app with eparking's sheet, below.)
 
 | qrpark file | Source in eparking | What changed |
 |---|---|---|
@@ -125,3 +125,20 @@ system browser, and its payment rules are this app's own (`BoothRules.kt`).
 Written new for 4b, not copied: `BoothRules.kt`, `PaymentAttempts.kt`,
 `BoothActivity.kt`, `EntryPanel.kt` (A4a-1), their tests, and the backend's
 `POST /payments/:id/cancel`.
+
+## Copied in the Sprint 4b fix round (from eparking 359c0c1)
+
+The Paystack checkout inside the app, as in eparking's POS (this reverses the
+4b "system browser" choice). The sheet stays a viewport with no authority over
+the payment.
+
+| qrpark file | Source in eparking | What changed |
+|---|---|---|
+| `android/app/src/main/java/ng/gsds/qrpark/CheckoutSheet.kt` | `android/pos/.../CheckoutSheet.kt` | The first address must pass `checkoutToOpen()` (https on a Paystack host), else a plain error and nothing loads; WebView hardened: file and content access off, mixed content never, no form saving, web-contents debugging off, no JavaScript bridge, SSL errors cancelled; the failure view shows a sanitised code, never the address; on close the cache, cookies, web storage, form data and history are cleared; this app's strings, colours and system-bar padding |
+| `android/app/src/main/java/ng/gsds/qrpark/CheckoutPage.kt` | `android/pos/.../CheckoutPage.kt` | Package; `pageFailureReason()` added (only a `net::ERR_` code is shown) |
+| `android/app/src/main/java/ng/gsds/qrpark/CheckoutNavigation.kt` | `android/pos/.../CheckoutNavigation.kt` | Package; **https only** (eparking also allowed http) |
+| `android/app/src/test/java/ng/gsds/qrpark/CheckoutPageTest.kt` | `android/pos/app/src/test/.../CheckoutPageTest.kt` | Package; a test for `pageFailureReason()` added |
+| `android/app/src/test/java/ng/gsds/qrpark/CheckoutNavigationTest.kt` | `android/pos/app/src/test/.../CheckoutNavigationTest.kt` | Package; the http case now expects BLOCK, and a test that http is refused on every host and frame |
+| `android/app/src/main/res/values/strings.xml` (the `checkout_*` strings) | `android/pos/app/src/main/res/values/strings.xml` | Reworded for the booth; "sandbox" dropped from the title; `checkout_not_paystack` added |
+
+Written new in the fix round: `WebViewRulesTest.kt` (the WebView's source rules).

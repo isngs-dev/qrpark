@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma.service';
 import { SiteService } from '../site.service';
 import { PaystackGateway } from '../paystack/paystack.gateway';
 import { amountMatches, paystackPaidAt, windowExpired } from '../paystack/verdicts';
+import { LATE_CHECK_MINUTES } from '../jobs/verify-schedule';
 
 /**
  * Everything that moves a CARD payment out of PENDING, and the only place a
@@ -168,6 +169,29 @@ export class SettlementService {
     });
     if (windowExpired(payment.createdAt, new Date(), setting.paymentWindowMinutes)) {
       await this.abandon(payment.id, reference, `not paid within ${setting.paymentWindowMinutes} minutes`);
+    }
+  }
+
+  /**
+   * T8: a CARD payment that already ENDED (ABANDONED or FAILED), asked again
+   * within LATE_CHECK_MINUTES of ending (its updated_at, on the database
+   * clock: every status change writes it, and nothing else touches an ended
+   * payment). Only Paystack's SUCCESS changes anything, through the unchanged
+   * settleSuccess: LATE_SUCCESS (ticket PAID), or DUPLICATE when the ticket was
+   * paid meanwhile (by cash). Any other answer, or none, changes nothing.
+   */
+  async verifyEnded(reference: string): Promise<void> {
+    const siteId = await this.site.getId();
+    const [found] = await this.prisma.$queryRaw<Array<{ recent: boolean }>>`
+      SELECT updated_at >= now() - make_interval(mins => ${LATE_CHECK_MINUTES}::int) AS recent
+        FROM payment
+       WHERE site_id = ${siteId}::uuid AND reference = ${reference}
+         AND method = 'CARD' AND status IN ('ABANDONED', 'FAILED')`;
+    if (!found || !found.recent) return;
+
+    const answer = await this.gateway.verify(reference);
+    if (answer.kind === 'success' && answer.data) {
+      await this.settleSuccess(reference, answer.data, 'verify');
     }
   }
 

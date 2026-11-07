@@ -1,8 +1,7 @@
 package ng.gsds.qrpark
 
-import android.content.ActivityNotFoundException
+import android.app.Dialog
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -19,8 +18,8 @@ import ng.gsds.qrpark.databinding.ActivityBoothBinding
 /**
  * Booth mode (docs/01-flow.md section 2): scan (or Find by number), Check,
  * then "Paid" or "Take payment ₦N" -> Cash ("Confirm ₦N cash received", one
- * tap) or Card (Paystack's checkout in the system browser; the screen waits
- * for the backend's answer). Every decision about what is shown is in
+ * tap) or Card (Paystack's checkout in CheckoutSheet, inside the app; this
+ * screen keeps polling behind it and waits for the backend's answer). Every decision about what is shown is in
  * BoothRules.kt; "Paid" only on the backend's word.
  *
  * Held in memory only, never stored or logged: the scanned text (cleared as
@@ -45,6 +44,9 @@ class BoothActivity : AppCompatActivity(), ScanScreen, ScanKeyScreen {
     private var checkoutUrl: String? = null
     private var waitStartedAt = 0L
     private var polling = false
+
+    /** The checkout sheet, while it is open. It has no say over the payment (CheckoutSheet.kt). */
+    private var sheet: Dialog? = null
     private var busy = false
 
     private val poll = Runnable { pollOnce() }
@@ -79,6 +81,7 @@ class BoothActivity : AppCompatActivity(), ScanScreen, ScanKeyScreen {
         binding.nextButton.setOnClickListener { next() }
         binding.signOutButton.setOnClickListener {
             stopPolling()
+            closeSheet()
             BackendClient.logout(session) {}
             openSignIn(ended = false)
         }
@@ -100,6 +103,7 @@ class BoothActivity : AppCompatActivity(), ScanScreen, ScanKeyScreen {
 
     override fun onDestroy() {
         stopPolling()
+        closeSheet()
         super.onDestroy()
     }
 
@@ -315,13 +319,21 @@ class BoothActivity : AppCompatActivity(), ScanScreen, ScanKeyScreen {
         startPolling()
     }
 
+    /**
+     * Paystack's checkout, inside the app (CheckoutSheet). Only an address that
+     * passes checkoutToOpen() is opened; the sheet checks it again. The booth
+     * keeps polling behind the sheet; the sheet decides nothing.
+     */
     private fun openCheckout() {
-        val url = checkoutToOpen(checkoutUrl) ?: return
-        try {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-        } catch (_: ActivityNotFoundException) {
-            binding.message.setText(R.string.checkout_not_opened)
-        }
+        val url = checkoutToOpen(checkoutUrl) ?: return run { binding.message.setText(R.string.checkout_not_opened) }
+        if (sheet?.isShowing == true) return
+        sheet = CheckoutSheet.open(this, url) { sheet = null }
+    }
+
+    /** The payment reached a resting state (or the screen is going): the sheet goes. */
+    private fun closeSheet() {
+        sheet?.dismiss()
+        sheet = null
     }
 
     private fun startPolling() {
@@ -355,6 +367,7 @@ class BoothActivity : AppCompatActivity(), ScanScreen, ScanKeyScreen {
                 }
                 is CardView.Paid -> {
                     stopPolling()
+                    closeSheet()
                     cardPaymentId = null
                     showTicket(view.ticket, BoothView.Paid(view.ticket))
                 }
@@ -367,6 +380,7 @@ class BoothActivity : AppCompatActivity(), ScanScreen, ScanKeyScreen {
 
     private fun endCard(message: String, offerAgain: Boolean) {
         stopPolling()
+        closeSheet()
         cardPaymentId = null
         checkoutUrl = null
         binding.cardPanel.visibility = View.GONE
@@ -396,6 +410,7 @@ class BoothActivity : AppCompatActivity(), ScanScreen, ScanKeyScreen {
                 is CancelView.Ended -> endCard(view.message, offerAgain = true)
                 is CancelView.Paid -> {
                     stopPolling()
+                    closeSheet()
                     cardPaymentId = null
                     showTicket(view.ticket, BoothView.Paid(view.ticket))
                 }

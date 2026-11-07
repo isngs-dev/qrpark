@@ -532,11 +532,20 @@ or nothing happens. In the same transaction (ticket row locked first):
   reference is logged. Not revenue: refund it in the Paystack dashboard.
 - **Ticket expired**: the payment SUCCESS and the ticket PAID; it stays EXPIRED
   and cannot exit; a `LATE_SUCCESS_EXPIRED` warning is logged.
-- **Late SUCCESS after ABANDONED or FAILED**: accepted, `LATE_SUCCESS` warning.
+- **Late SUCCESS after ABANDONED or FAILED**: accepted, `LATE_SUCCESS` warning
+  (or DUPLICATE, above, if the ticket was paid meanwhile).
 - FAILED on Paystack's failure; ABANDONED past the window when Paystack says it
   is not paid, or at once when Paystack has no such transaction and never gave
-  a checkout. No answer from Paystack changes nothing. The sweep touches only
-  PENDING payments, so a DUPLICATE is never reprocessed.
+  a checkout. No answer from Paystack changes nothing.
+- **Ended card payments are checked again (T8, Sprint 4b fix).** A CARD payment
+  that ended ABANDONED or FAILED (a cancel at the booth included) is still
+  verified by the delayed checks and the 2-minute sweep for
+  **`LATE_CHECK_MINUTES` = 30 minutes** after it ended (its `updated_at`,
+  database clock), also when the ticket was paid by cash meanwhile. At most one
+  Paystack call per payment per sweep. Only Paystack's SUCCESS changes it, by
+  the rules above (LATE_SUCCESS, or DUPLICATE); any other answer, or none,
+  changes nothing. SUCCESS and DUPLICATE payments are never checked again, so a
+  DUPLICATE is never reprocessed.
 
 ---
 

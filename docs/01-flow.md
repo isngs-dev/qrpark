@@ -81,8 +81,10 @@ validated; the same QR; audited (who reprinted, who issued it).
      dialog: the amount on the button is the confirmation. A double tap does not
      post twice. The confirmation records operator, booth, device and backend
      time, and is audited.
-   - **Card**: the Paystack checkout opens on the device. The app waits ("Waiting
-     for Paystack to confirm…"); closing the checkout, or any message from the
+   - **Card**: the Paystack checkout opens inside the app, in a sheet the
+     operator can close at any time; the sheet decides nothing. The app waits
+     behind it ("Waiting for Paystack to confirm…") and takes the sheet down
+     when the payment ends; closing the checkout, or any message from the
      device, is never success. The ticket becomes PAID only when Paystack
      confirms (signed webhook, or a verify call). FAILED or ABANDONED is said
      plainly and the operator can choose again; still pending says "Not

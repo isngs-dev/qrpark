@@ -115,7 +115,9 @@ class SourceRulesTest {
     fun `the checkout address is opened only through the Paystack check, and never stored`() {
         val booth = stripComments(java.io.File("src/main/java/ng/gsds/qrpark/BoothActivity.kt").readText())
         assertTrue(booth.contains("checkoutToOpen("))
-        assertFalse(Regex("""Uri\.parse\((?!url\))""").containsMatchIn(booth))
+        // Sprint 4b fix: inside the app, in CheckoutSheet; no browser hand-off.
+        assertTrue(booth.contains("CheckoutSheet.open("))
+        assertFalse(Regex("""Uri\.parse\(|ACTION_VIEW""").containsMatchIn(booth))
         assertFalse(SecureStore.Slot.values().any { it.name.contains("URL") || it.name.contains("CHECKOUT") || it.name.contains("TOKEN") })
     }
 

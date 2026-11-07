@@ -132,7 +132,9 @@ test('sweep: checks every PENDING payment older than the 20 s fallback, and noth
   await t.prisma.$executeRawUnsafe(`UPDATE payment SET created_at = now() - interval '30 seconds' WHERE id = $1::uuid`, old.id);
   answer(old.reference, 'success', successData({ reference: old.reference, amountKobo: old.amountKobo }));
 
-  const settledBefore = await t.prisma.payment.findMany({ where: { siteId: t.siteId, status: { not: 'PENDING' } }, select: { reference: true } });
+  // Settled = SUCCESS or DUPLICATE. Since T8 (Sprint 4b fix) card payments that
+  // ENDED (ABANDONED, FAILED) within LATE_CHECK_MINUTES are checked too: late-check.lifecycle.test.ts.
+  const settledBefore = await t.prisma.payment.findMany({ where: { siteId: t.siteId, status: { in: ['SUCCESS', 'DUPLICATE'] } }, select: { reference: true } });
   await jobs.sweep();
 
   assert.ok(t.paystack.verifyCalls.includes(old.reference), 'the old payment was not checked');
@@ -144,7 +146,7 @@ test('sweep: checks every PENDING payment older than the 20 s fallback, and noth
   await clearPending(t, other.id);
 });
 
-test('the sweep never reprocesses a DUPLICATE (or any settled payment): it checks only PENDING', async () => {
+test('the sweep never reprocesses a DUPLICATE (or any settled payment): it checks PENDING, and ended card payments within the T8 window', async () => {
   const tk = await makeTicket(t);
   const res = await startCard(t, t.users.booth.id, { ticketId: tk.id });
   const p = await t.prisma.payment.findUniqueOrThrow({ where: { id: res.body.id } });

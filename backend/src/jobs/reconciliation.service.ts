@@ -3,6 +3,7 @@ import { Queue, Worker, type ConnectionOptions } from 'bullmq';
 import { PrismaService } from '../prisma.service';
 import { SiteService } from '../site.service';
 import { SettlementService } from '../payments/settlement.service';
+import { LATE_CHECK_MINUTES } from './verify-schedule';
 
 /**
  * Two background jobs, both of which change a payment ONLY from Paystack's
@@ -24,6 +25,7 @@ import { SettlementService } from '../payments/settlement.service';
  */
 
 export const VERIFY_FALLBACK_MS = 20_000;
+export { LATE_CHECK_MINUTES };
 const SWEEP_EVERY_MS = 2 * 60_000;
 const QUEUE = 'qrpark-payments';
 
@@ -99,8 +101,16 @@ export class ReconciliationService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * One delayed check. PENDING: as before. A CARD payment that ended
+   * ABANDONED or FAILED within LATE_CHECK_MINUTES (for example cancelled at
+   * the booth before this check fired): asked again (T8).
+   */
   async verifyOne(reference: string): Promise<void> {
-    await this.settlement.verifyAndApply(reference);
+    const payment = await this.prisma.payment.findUnique({ where: { reference }, select: { status: true } });
+    if (!payment) return;
+    if (payment.status === 'PENDING') return this.settlement.verifyAndApply(reference);
+    if (payment.status === 'ABANDONED' || payment.status === 'FAILED') return this.settlement.verifyEnded(reference);
   }
 
   /** Every PENDING payment older than the fallback, oldest first, one at a time. */
@@ -112,11 +122,33 @@ export class ReconciliationService implements OnModuleInit, OnModuleDestroy {
       select: { reference: true },
       take: 200,
     });
+    // At most one Paystack call per payment per sweep: a payment this sweep
+    // abandons in the PENDING pass is not asked again in the ended pass.
+    const asked = new Set<string>();
     for (const { reference } of stale) {
+      asked.add(reference);
       try {
         await this.settlement.verifyAndApply(reference);
       } catch (error) {
         this.logger.error(`Sweep could not check ${reference}: ${(error as Error).message}`);
+      }
+    }
+
+    // T8: CARD payments that ended ABANDONED or FAILED within LATE_CHECK_MINUTES
+    // (verifyEnded re-checks the time on the database clock).
+    const ended = await this.prisma.$queryRaw<Array<{ reference: string }>>`
+      SELECT reference FROM payment
+       WHERE site_id = ${siteId}::uuid AND method = 'CARD' AND status IN ('ABANDONED', 'FAILED')
+         AND updated_at >= now() - make_interval(mins => ${LATE_CHECK_MINUTES}::int)
+       ORDER BY updated_at ASC
+       LIMIT 200`;
+    for (const { reference } of ended) {
+      if (asked.has(reference)) continue;
+      asked.add(reference);
+      try {
+        await this.settlement.verifyEnded(reference);
+      } catch (error) {
+        this.logger.error(`Sweep could not re-check ${reference}: ${(error as Error).message}`);
       }
     }
   }

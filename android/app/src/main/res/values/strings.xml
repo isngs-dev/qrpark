@@ -86,6 +86,16 @@
     <string name="expired">Expired: issued on an earlier day. No payment is taken.</string>
     <string name="cannot_confirm_title">Cannot be confirmed</string>
 
+    <!-- The checkout sheet (copied from eparking 359c0c1 pos strings, reworded for the booth) -->
+    <string name="checkout_sheet_title">Paystack checkout</string>
+    <string name="checkout_sheet_close">Close</string>
+    <string name="checkout_page_loading">Loading the checkout page…</string>
+    <string name="checkout_page_failed">The checkout page did not load.</string>
+    <string name="checkout_page_failed_body">This says nothing about the payment. If the customer has already been charged, the booth will still be told: it is checking behind this screen. Try again, or close this.</string>
+    <string name="checkout_page_reason">Reason: %1$s</string>
+    <string name="checkout_page_retry">Try again</string>
+    <string name="checkout_not_paystack">This is not Paystack\'s checkout, so it was not opened.</string>
+
     <!-- Camera -->
     <string name="close">Close</string>
     <string name="point_at_ticket">Point the camera at the ticket\'s QR.</string>
