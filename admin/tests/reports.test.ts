@@ -108,14 +108,57 @@ test('the backend\'s file passes through byte for byte, with its filename, no-st
   assert.equal(f.calls[0].init?.method ?? 'GET', 'GET');
 });
 
-test('the backend\'s refusal is shown as written, with its status', async () => {
+test('the backend\'s refusal is shown as written, with its status (H4: on a small portal page)', async () => {
   const msg = 'More than 50000 rows: narrow the date range or the filters.';
   const f = fakeFetch(() => new Response(JSON.stringify({ statusCode: 400, message: msg, error: 'Bad Request' }), { status: 400, headers: { 'content-type': 'application/json' } }));
   const res = await csvResponse('transactions', new URLSearchParams('from=2026-10-01&to=2026-10-31'), 'tok', f.fn, 'http://backend');
   assert.equal(res.status, 400);
-  assert.equal(await res.text(), msg);
-  assert.match(res.headers.get('content-type') ?? '', /^text\/plain/);
+  const page = await res.text();
+  assert.ok(page.includes(`<p class="message">${msg}</p>`), 'the backend\'s words, as written');
+  assert.match(res.headers.get('content-type') ?? '', /^text\/html; charset=utf-8/);
   assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(res.headers.get('cache-control'), 'no-store');
+  assert.equal(res.headers.get('content-disposition'), null, 'a page, not a download');
+});
+
+test('the refusal page escapes the backend\'s words and the filters (no markup gets through)', async () => {
+  const msg = '<script>alert("x")</script> & \'quotes\'';
+  const f = fakeFetch(() => new Response(JSON.stringify({ message: msg }), { status: 400, headers: { 'content-type': 'application/json' } }));
+  const res = await csvResponse('finance', new URLSearchParams('from=2026-11-01&to=2026-11-0"><img src=x>'), 'tok', f.fn, 'http://backend');
+  const page = await res.text();
+  assert.ok(page.includes('&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt; &amp; &#39;quotes&#39;'), page);
+  assert.ok(!page.includes('<script>') && !page.includes('<img'), 'no markup from outside');
+});
+
+test('the refusal page links back to the report with its own filters only', async () => {
+  const f = fakeFetch(() => new Response(JSON.stringify({ message: 'A CSV covers at most 31 days.' }), { status: 400, headers: { 'content-type': 'application/json' } }));
+  const res = await csvResponse('transactions', new URLSearchParams('from=2026-09-01&to=2026-11-09&q=K7&state=PAID'), 'tok', f.fn, 'http://backend');
+  assert.match(await res.text(), /<a href="\/transactions\?from=2026-09-01&amp;to=2026-11-09&amp;q=K7&amp;state=PAID">Back to the report<\/a>/);
+  const audit = await csvResponse('audit', new URLSearchParams('from=2026-09-01&to=2026-11-09'), 'tok', f.fn, 'http://backend');
+  assert.match(await audit.text(), /<a href="\/audit\?from=2026-09-01&amp;to=2026-11-09">Back to the report<\/a>/);
+});
+
+test('every refusal is a page: no cookie (401), an unknown report or parameter (400), the backend unreachable (502)', async () => {
+  const none = fakeFetch(() => new Response('x'));
+  const down = (async () => { throw new Error('ECONNREFUSED'); }) as unknown as typeof fetch;
+  const cases: Array<[Response, number, RegExp]> = [
+    [await csvResponse('finance', new URLSearchParams('from=2026-11-01&to=2026-11-02'), undefined, none.fn, 'http://backend'), 401, /href="\/finance\?from=2026-11-01&amp;to=2026-11-02"/],
+    [await csvResponse('dashboard', new URLSearchParams(''), 'tok', none.fn, 'http://backend'), 400, /href="\/"/],
+    [await csvResponse('finance', new URLSearchParams('from=1&to=2&evil=1'), 'tok', none.fn, 'http://backend'), 400, /href="\/finance\?from=1&amp;to=2"/],
+    [await csvResponse('finance', new URLSearchParams('from=2026-11-01&to=2026-11-02'), 'tok', down, 'http://backend'), 502, /href="\/finance\?from=2026-11-01&amp;to=2026-11-02"/],
+  ];
+  for (const [res, status, link] of cases) {
+    assert.equal(res.status, status);
+    assert.match(res.headers.get('content-type') ?? '', /^text\/html/);
+    assert.equal(res.headers.get('cache-control'), 'no-store');
+    assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+    const page = await res.text();
+    assert.match(page, link);
+    assert.match(page, />Back to the report</);
+    // The message may name a refused parameter (escaped); the link never carries it.
+    const href = /<a href="([^"]*)">Back to the report<\/a>/.exec(page)?.[1] ?? '';
+    assert.doesNotMatch(href, /evil/);
+  }
 });
 
 test('a backend that cannot be reached, or answers something not CSV, gives no file', async () => {

@@ -32,7 +32,8 @@ export function ReportFrame({
               {/* A plain link: it is a file download (the CSV route), not a page. */}
               <a href={csv} className="font-medium text-accent underline">
                 Download CSV
-              </a>
+              </a>{' '}
+              <span className="text-ink-soft">(at most 31 days, 50,000 rows)</span>
             </>
           ) : null}
         </p>

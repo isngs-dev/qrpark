@@ -142,6 +142,8 @@ test('every report page shows its range, "Lagos time" and that nothing here can 
   assert.ok(frame, 'the shared report frame');
   assert.match(frame.text, /· all times are Lagos time/, "the rendered line, not a comment");
   assert.match(frame.text, /Nothing here can change a payment/);
+  // H4: the limits next to every Download CSV link (the note right after the link, in the frame every report uses).
+  assert.match(frame.text, /Download CSV\s*<\/a>\s*\{' '\}\s*<span[^>]*>\(at most 31 days, 50,000 rows\)<\/span>/);
   for (const p of REPORT_PAGES) {
     const f = all.find((x) => x.path === p);
     assert.ok(f, `${p} exists`);
