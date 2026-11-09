@@ -79,16 +79,76 @@ test('a password never goes into a URL, a message or a template; every password 
   assert.ok(fields >= 3, `${fields} password fields checked (sign-in, new account, reset)`);
 });
 
-test('nothing changes state through a GET: no GET forms, and every write goes through a Server Action', () => {
-  const getForms = lines.filter((l) => /method=["'{]?\s*["']?get/i.test(l.line));
-  assert.equal(getForms.length, 0, where(getForms));
+test('nothing changes state through a GET: GET forms (report filters) never call a Server Action, and every write goes through one', () => {
+  let getForms = 0;
+  for (const f of all) {
+    for (const m of f.text.matchAll(/<form\b[^>]*>/g)) {
+      if (!/method="get"/.test(m[0])) continue;
+      getForms++;
+      assert.doesNotMatch(m[0], /action=\{/, `${f.path}: a GET form calls a Server Action`);
+      assert.doesNotMatch(f.text, /^'use server';/, `${f.path}: a GET form in a Server Action module`);
+    }
+  }
+  assert.ok(getForms >= 4, `${getForms} report filter forms`);
+  // Sprint 5c: exactly one route handler, the read-only CSV download, and it exports GET only.
   const routeHandlers = all.filter((f) => /\/route\.(ts|js)$/.test(f.path));
-  assert.equal(routeHandlers.length, 0, routeHandlers.map((f) => f.path).join(', '));
+  assert.deepEqual(routeHandlers.map((f) => f.path), ['app/csv/[report]/route.ts']);
+  const exported = [...routeHandlers[0].text.matchAll(/export\s+(?:async\s+)?(?:function|const)\s+(\w+)/g)].map((m) => m[1]);
+  assert.deepEqual(exported.filter((n) => n !== 'dynamic'), ['GET'], `the CSV route exports ${exported.join(', ')}`);
   const writes = lines.filter((l) => /method:\s*'(POST|PATCH|DELETE)'/.test(l.line));
   const outside = writes.filter((l) => !/^lib\/(\w|-)+-actions\.ts$|^lib\/api\.ts$|^middleware\.ts$/.test(l.path));
   assert.equal(outside.length, 0, where(outside));
   for (const f of all.filter((x) => /-actions\.ts$/.test(x.path))) {
     assert.match(f.text, /^'use server';/, `${f.path} is a Server Action module`);
+  }
+});
+
+test('no day from the portal\'s own clock, and every time is formatted in Africa/Lagos', () => {
+  const clock = lines.filter((l) => /Date\.now\(|new Date\(\s*\)/.test(l.line));
+  assert.equal(clock.length, 0, where(clock));
+  for (const f of all) {
+    for (const m of f.text.matchAll(/Intl\.DateTimeFormat\(([\s\S]*?)\}\)/g)) {
+      assert.match(m[1], /timeZone:\s*'Africa\/Lagos'/, `${f.path}: a date format without Africa/Lagos`);
+    }
+  }
+  const locale = lines.filter((l) => /toLocale(Date|Time)?String\(/.test(l.line));
+  assert.equal(locale.length, 0, where(locale));
+});
+
+test('no money is computed in the portal: no arithmetic on an amount in kobo', () => {
+  const sums = lines.filter((l) => !/^\s*(\*|\/\/)/.test(l.line) && /(\b\w*[kK]obo\b(\)|\])?\s*[-+*/%]\s*[\w(]|[\w)]\s*[-+*/%]\s*\w*\.\w*[kK]obo\b|reduce\([^)]*[kK]obo)/.test(l.line));
+  assert.equal(sums.length, 0, where(sums));
+});
+
+const REPORT_PAGES = ['app/(portal)/page.tsx', 'app/(portal)/transactions/page.tsx', 'app/(portal)/transactions/[id]/page.tsx', 'app/(portal)/incomplete/page.tsx', 'app/(portal)/finance/page.tsx', 'app/(portal)/audit/page.tsx'];
+
+test('every report page shows its range, "Lagos time" and that nothing here can change a payment', () => {
+  const frame = all.find((f) => f.path === 'app/(portal)/report-frame.tsx');
+  assert.ok(frame, 'the shared report frame');
+  assert.match(frame.text, /· all times are Lagos time/, "the rendered line, not a comment");
+  assert.match(frame.text, /Nothing here can change a payment/);
+  for (const p of REPORT_PAGES) {
+    const f = all.find((x) => x.path === p);
+    assert.ok(f, `${p} exists`);
+    assert.match(f.text, /<ReportFrame\b/, `${p} uses the report frame`);
+  }
+});
+
+test('the plain explanations are on the pages', () => {
+  const text = (p: string) => all.find((x) => x.path === p)?.text ?? '';
+  assert.match(text('app/(portal)/finance/page.tsx'), /a payment counts on the Lagos day it was recorded as paid/i);
+  assert.match(text('app/(portal)/incomplete/page.tsx'), /in progress = today's tickets, never validated = earlier days/i);
+  for (const p of ['app/(portal)/finance/page.tsx', 'app/(portal)/page.tsx']) {
+    assert.match(text(p), /not revenue/i, `${p} says DUPLICATE and cancelled are not revenue`);
+  }
+});
+
+test('nothing secret has a field to land in: no token, checkout URL, access code, authorization code or Paystack payload in the report shapes or pages', () => {
+  const scope = all.filter((f) => f.path === 'lib/reports-types.ts' || f.path === 'lib/reports.ts' || REPORT_PAGES.includes(f.path));
+  assert.ok(scope.length >= 8);
+  for (const f of scope) {
+    const hit = /\b(token|ticketToken|authorizationUrl|authorization_url|accessCode|access_code|authorizationCode|authorization_code|paystackEvent|paystack_event)\b/i.exec(f.text);
+    assert.equal(hit, null, `${f.path}: ${hit?.[0]}`);
   }
 });
 

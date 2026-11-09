@@ -1,72 +1,65 @@
 import Link from 'next/link';
-import { getCategories, getGates, getSettings } from '@/lib/config';
-import { LOCATION_KINDS, LOCATION_LABELS, naira } from '@/lib/config-types';
-import { getUsers } from '@/lib/users';
-import { ROLE_LABELS, ROLES } from '@/lib/users-types';
-import { Block, Note, PageHead, TableWrap, Td, Th, Tr } from './ui';
+import { naira } from '@/lib/config-types';
+import { getDashboard } from '@/lib/reports';
+import type { Split } from '@/lib/reports-types';
+import { Refused, ReportFrame, ShowButton } from './report-frame';
+import { Tile, Tiles } from './ui';
 
-export const metadata = { title: 'Overview · QR Parking Admin' };
+export const metadata = { title: 'Dashboard · QR Parking Admin' };
 
 /**
- * What is configured, at a glance (Sprint 5b). Counts of what the backend
- * returned; every price is the backend's, shown from kobo. The reports
- * (dashboard, transactions, finance) come in Sprint 5c.
+ * One Lagos day at a glance (Sprint 5c; replaces the 5b overview). With no day
+ * chosen the portal sends none and the backend answers with its own today.
+ * Every count and amount is the backend's.
  */
-export default async function Overview() {
-  const [settings, categories, gates, users] = await Promise.all([getSettings(), getCategories(), getGates(), getUsers()]);
-  const failed = [settings, categories, gates, users].find((r) => !r.ok);
-  if (failed && !failed.ok) return <p className="rounded-md bg-bad-wash px-3 py-2 text-sm text-bad">{failed.message}</p>;
-  if (!settings.ok || !categories.ok || !gates.ok || !users.ok) return null;
+export default async function DashboardPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
+  const input = await searchParams;
+  const result = await getDashboard(input);
+  if (!result.ok) return <Refused message={result.message} />;
+  const d = result.data;
+  const breakdown = (s: Split) => [
+    { label: `Cash (${s.cash.count})`, value: naira(s.cash.kobo) },
+    { label: `Card (${s.card.count})`, value: naira(s.card.kobo) },
+  ];
 
   return (
-    <>
-      <PageHead title={settings.data.displayName} when={`Paystack: ${settings.data.paystackMode}`} />
+    <ReportFrame
+      title="Dashboard"
+      range={{ day: d.day }}
+      explain="Tickets are counted on the Lagos day they were issued; revenue on the Lagos day each payment was recorded as paid."
+    >
+      <form method="get" className="mb-5 flex flex-wrap items-end gap-3">
+        <label className="text-xs text-ink-soft">
+          Day
+          <input type="date" name="day" defaultValue={d.day} className="mt-1 block rounded border border-line px-2 py-1 text-sm" />
+        </label>
+        <ShowButton />
+        <Link href="/" className="pb-1.5 text-sm text-accent underline">Today</Link>
+      </form>
 
-      <Block title="Vehicle types and prices" aside={<Link className="text-accent" href="/settings/categories">Change</Link>}>
-        <TableWrap>
-          <thead>
-            <tr><Th>Vehicle type</Th><Th>Code</Th><Th align="right">Price for a new ticket</Th><Th>Status</Th></tr>
-          </thead>
-          <tbody>
-            {categories.data.map((c) => (
-              <Tr key={c.id}>
-                <Td>{c.name}</Td>
-                <Td variant="mono">{c.code}</Td>
-                <Td variant="amount">{naira(c.priceKobo)}</Td>
-                <Td>{c.isActive ? 'on sale' : 'retired'}</Td>
-              </Tr>
-            ))}
-          </tbody>
-        </TableWrap>
-      </Block>
+      <Tiles>
+        <Tile period="Revenue" total={naira(d.revenue.total.kobo)} breakdown={breakdown(d.revenue)} />
+        <Tile
+          period="Not revenue"
+          total="Listed apart"
+          breakdown={[
+            { label: `Duplicate card (${d.notRevenue.duplicate.count})`, value: naira(d.notRevenue.duplicate.kobo) },
+            { label: `Cancelled card (${d.notRevenue.cancelled.count})`, value: naira(d.notRevenue.cancelled.kobo) },
+          ]}
+        />
+      </Tiles>
 
-      <Block title="Locations in service" aside={<Link className="text-accent" href="/settings/locations">Change</Link>}>
-        <TableWrap>
-          <tbody>
-            {LOCATION_KINDS.map((kind) => (
-              <Tr key={kind}>
-                <Td>{LOCATION_LABELS[kind]}s</Td>
-                <Td variant="mono">{gates.data.filter((g) => g.direction === kind && g.isActive).map((g) => g.code).join(', ') || '—'}</Td>
-              </Tr>
-            ))}
-          </tbody>
-        </TableWrap>
-      </Block>
+      <Tiles>
+        <Tile period="Tickets issued" total={String(d.tickets.issued)} breakdown={[{ label: 'Paid', value: String(d.tickets.paid) }, { label: 'Unpaid', value: String(d.tickets.unpaid) }]} />
+        <Tile period="Left (validated)" total={String(d.tickets.validated)} />
+        <Tile period="In progress (not yet out)" total={String(d.tickets.inProgress)} />
+        <Tile period="Never validated" total={String(d.tickets.neverValidated)} />
+      </Tiles>
 
-      <Block title="Active accounts" aside={<Link className="text-accent" href="/operators">Change</Link>}>
-        <TableWrap>
-          <tbody>
-            {ROLES.map((role) => (
-              <Tr key={role}>
-                <Td>{ROLE_LABELS[role]}</Td>
-                <Td variant="amount">{users.data.filter((u) => u.role === role && u.isActive).length}</Td>
-              </Tr>
-            ))}
-          </tbody>
-        </TableWrap>
-      </Block>
-
-      <Note>Reports (dashboard, transactions, incomplete sessions, finance, audit) arrive in the next part of this sprint.</Note>
-    </>
+      <p className="text-xs text-ink-soft">
+        Duplicate card payments (to refund in the Paystack dashboard) and card payments cancelled at the booth are not revenue and
+        are never counted in it. See <Link className="text-accent underline" href="/finance">Finance</Link> for the lists.
+      </p>
+    </ReportFrame>
   );
 }

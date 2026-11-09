@@ -21,7 +21,11 @@ export default async function PortalLayout({ children }: { children: React.React
   if (user && !mayUsePortal(user.role)) redirect('/login');
 
   const nav: NavItem[] = [
-    { href: '/', label: 'Overview', icon: 'overview', group: 'Operate' },
+    { href: '/', label: 'Dashboard', icon: 'overview', group: 'Reports' },
+    { href: '/transactions', label: 'Transactions', icon: 'passes', group: 'Reports' },
+    { href: '/incomplete', label: 'Incomplete sessions', icon: 'info', group: 'Reports' },
+    { href: '/finance', label: 'Finance', icon: 'finance', group: 'Reports' },
+    { href: '/audit', label: 'Audit log', icon: 'audit', group: 'Reports' },
     { href: '/settings', label: 'Configuration', icon: 'settings', group: 'Configure' },
     { href: '/operators', label: 'Operators', icon: 'staff', group: 'Configure' },
   ];

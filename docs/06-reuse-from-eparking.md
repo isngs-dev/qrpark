@@ -187,3 +187,18 @@ byte-identical.
 Written new in Sprint 5b: `admin/lib/backend-url.ts`, `admin/app/(portal)/page.tsx`
 (the overview), `admin/next.config.mjs` (security headers), and the tests
 `admin/tests/rules.test.ts` and `admin/tests/source-scan.test.ts`.
+
+## Copied in Sprint 5c (from eparking 359c0c1)
+
+The report pages. eparking's finance and audit pages were read for ideas
+only (eparking has no CSV download); nothing else was copied.
+
+| qrpark file | Source in eparking (`admin/`) | What changed |
+|---|---|---|
+| `admin/app/(portal)/pager.tsx` | `app/(portal)/pager.tsx` | Numbered pages ("Page N of M", previous / next) instead of cursors, since the 5a routes page by number; both ends still always drawn, a dead end greyed; `lib/pagination.ts` not copied (`pageLinks` in `lib/reports-types.ts`) |
+
+Written new in Sprint 5c: `admin/lib/reports-types.ts`, `admin/lib/reports.ts`,
+`admin/lib/csv-route.ts`, `admin/app/csv/[report]/route.ts` (the read-only CSV
+download, GET only), `admin/app/(portal)/report-frame.tsx`, the dashboard,
+transactions (and ticket detail), incomplete sessions, finance and audit pages,
+`lagosDay()` in `lib/config-types.ts`, and `admin/tests/reports.test.ts`.

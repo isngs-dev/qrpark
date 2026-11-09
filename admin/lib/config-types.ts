@@ -93,3 +93,11 @@ export function lagosTime(iso: string | null | undefined): string {
   const p = Object.fromEntries(LAGOS.formatToParts(new Date(iso)).map((x) => [x.type, x.value]));
   return `${p.day} ${p.month} ${p.year}, ${p.hour}:${p.minute}`;
 }
+
+const LAGOS_DAY = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Lagos', year: 'numeric', month: '2-digit', day: '2-digit' });
+
+/** The Lagos calendar day of a backend instant, "YYYY-MM-DD" (Sprint 5c). */
+export function lagosDay(iso: string): string {
+  const p = Object.fromEntries(LAGOS_DAY.formatToParts(new Date(iso)).map((x) => [x.type, x.value]));
+  return `${p.year}-${p.month}-${p.day}`;
+}

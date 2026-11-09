@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { koboFromNaira, lagosTime, naira } from '../lib/config-types.ts';
+import { koboFromNaira, lagosDay, lagosTime, naira } from '../lib/config-types.ts';
 import { cookieNames, cookieOptions, ACCESS_MAX_AGE_SECONDS, REFRESH_MAX_AGE_SECONDS } from '../lib/cookie-names.ts';
 import {
   MIN_PASSWORD_LENGTH,
@@ -46,6 +46,12 @@ test('times are shown in Africa/Lagos, whatever the reader\'s clock says', () =>
   assert.equal(lagosTime('2026-11-07T23:30:00.000Z'), '08 Nov 2026, 00:30');
   assert.equal(lagosTime('2026-11-07T13:05:59.000Z'), '07 Nov 2026, 14:05');
   assert.equal(lagosTime(null), '—');
+});
+
+test('the Lagos day of an instant: 23:30 UTC is already the next day in Lagos', () => {
+  assert.equal(lagosDay('2026-11-07T23:30:00.000Z'), '2026-11-08');
+  assert.equal(lagosDay('2026-11-07T22:59:59.000Z'), '2026-11-07');
+  assert.equal(lagosDay('2026-12-31T23:00:00.000Z'), '2027-01-01');
 });
 
 // ---------------------------------------------------------------- session cookies
