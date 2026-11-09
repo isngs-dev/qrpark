@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import Redis from 'ioredis';
 import { bootTestApp, call, type TestApp } from '../test-support/app';
 import { unthrottle } from '../unthrottle';
-import { LIMITS } from './login-throttle';
+import { LIMITS, throttleKeys } from './login-throttle';
 
 /**
  * Hardening H1 (M1): the sign-in throttle through the real routes, the real
@@ -157,12 +157,21 @@ test('every throttle key in Redis has a TTL and holds a hash, never a username o
   const u = await operator();
   const ip = addr();
   for (let i = 0; i < 3; i++) await login(u.username, 'wrong-password-x', ip);
+  // This test's own three keys: nothing else can touch them, so each must exist with a TTL.
+  const own = throttleKeys(process.env.JWT_SECRET!, t.siteId, u.username, ip);
+  for (const k of [own.pair, own.user, own.ip]) {
+    const ttl = await redis.pttl(k);
+    assert.ok(ttl > 0 && ttl <= LIMITS.windowSeconds * 1000, `own key ${k} ttl ${ttl}`);
+  }
   const keys = await redis.keys('qp:login:*');
   assert.ok(keys.length >= 3);
   for (const k of keys) {
     assert.match(k, /^qp:login:(pair|user|ip):[0-9a-f]{32}(:[0-9a-f]{32})?$/);
     assert.ok(!k.includes(u.username) && !k.includes(ip));
     const ttl = await redis.pttl(k);
+    // -2: deleted between KEYS and PTTL by a test in another file (a successful sign-in clears its
+    // pair; a reset clears a username). Every key that still exists must have a TTL (-1 fails).
+    if (ttl === -2) continue;
     assert.ok(ttl > 0 && ttl <= LIMITS.windowSeconds * 1000, `${k} ttl ${ttl}`);
   }
 });

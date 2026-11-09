@@ -75,11 +75,18 @@ before(async () => {
 });
 after(() => t?.close());
 
+type RouterStack = Array<{ route?: { path: string; methods: Record<string, boolean> } }>;
+
+/**
+ * The routes Express actually maps. Express 5 (NestJS 11, Hardening H2) keeps
+ * the router at app.router; Express 4 had app._router. No router found is a
+ * failure, never an empty list (the old `?? []` hid exactly that).
+ */
 function mappedRoutes(): string[] {
-  const server = t.app.getHttpAdapter().getInstance() as {
-    _router?: { stack: Array<{ route?: { path: string; methods: Record<string, boolean> } }> };
-  };
-  return (server._router?.stack ?? [])
+  const server = t.app.getHttpAdapter().getInstance() as { router?: { stack: RouterStack }; _router?: { stack: RouterStack } };
+  const stack = server.router?.stack ?? server._router?.stack;
+  assert.ok(stack && stack.length > 0, 'the Express router (app.router) was not found');
+  return stack
     .filter((layer) => layer.route)
     .flatMap((layer) =>
       Object.keys(layer.route!.methods).map((m) => `${m.toUpperCase()} ${layer.route!.path}`),
