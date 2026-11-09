@@ -25,6 +25,8 @@ import { TicketsService } from './tickets/tickets.service';
 import { ScanStore } from './scans/scan-store';
 import { ScansController } from './scans/scans.controller';
 import { ScansService } from './scans/scans.service';
+import { ReportsController } from './reports/reports.controller';
+import { ReportsService } from './reports/reports.service';
 
 @Module({
   imports: [ConfigModule.forRoot({ isGlobal: true }), CoreModule, AuthModule],
@@ -36,8 +38,10 @@ import { ScansService } from './scans/scans.service';
     PaystackController,
     TicketsController,
     ScansController,
+    ReportsController,
   ],
   providers: [
+    ReportsService,
     RedisService,
     AuditService,
     SiteConfigService,

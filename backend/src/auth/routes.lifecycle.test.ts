@@ -48,6 +48,12 @@ const ROUTES: Record<string, Access> = {
   'PATCH /admin/users/:id': ADMIN,
   'DELETE /admin/users/:id': ADMIN,
   'POST /admin/users/:id/password': ADMIN,
+  'GET /admin/reports/dashboard': ADMIN,
+  'GET /admin/reports/transactions': ADMIN,
+  'GET /admin/reports/transactions/:id': ADMIN,
+  'GET /admin/reports/incomplete': ADMIN,
+  'GET /admin/reports/finance': ADMIN,
+  'GET /admin/audit': ADMIN,
 
   'GET /categories': ENTRY,
   'POST /tickets': ENTRY,

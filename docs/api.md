@@ -4,7 +4,7 @@
 in the same commit as any endpoint change. If it and the code disagree, say
 which is wrong.
 
-Created: Sprint 1. Last change: Sprint 4b (`POST /payments/:id/cancel`). Before that, Sprint R (the booth flow: tickets at entry, cash and card at the booth, exit requires PAID). The access column is enforced by the global guard and
+Created: Sprint 1. Last change: Sprint 5a (the admin reports and the audit view, read-only). Before that, Sprint 4b (`POST /payments/:id/cancel`), and Sprint R (the booth flow: tickets at entry, cash and card at the booth, exit requires PAID). The access column is enforced by the global guard and
 pinned by `backend/src/auth/routes.lifecycle.test.ts`, which fails if a route
 is added without being listed there.
 
@@ -74,6 +74,12 @@ is added without being listed there.
 | `POST /paystack/webhook` | signed | | | | |
 | `POST /tickets/check` | | | yes | yes | yes |
 | `POST /tickets/validate` | | | | | yes |
+| `GET /admin/reports/dashboard` | | yes | | | |
+| `GET /admin/reports/transactions` | | yes | | | |
+| `GET /admin/reports/transactions/:id` | | yes | | | |
+| `GET /admin/reports/incomplete` | | yes | | | |
+| `GET /admin/reports/finance` | | yes | | | |
+| `GET /admin/audit` | | yes | | | |
 
 The old `POST /payments` (a payment that created the ticket) is gone since
 Sprint R.
@@ -646,3 +652,186 @@ record's database time.
 
 There is no offline approval and no bypass: only a `VALID` result from this
 backend lets a vehicle out.
+
+---
+
+## Admin: reports and the audit view (ADMIN only, read-only)
+
+Sprint 5a. Every route here is `GET`, ADMIN only, and changes nothing. There
+are no refunds, reversals or corrections anywhere.
+
+### Shared rules
+
+| Rule | Detail |
+|---|---|
+| Days | `from` and `to` are **Lagos days**, `YYYY-MM-DD`, inclusive, on the database clock. JSON: both optional (a missing one takes the other; none is today), at most **366 days**, `from <= to`, else 400 |
+| Attribution | Tickets by the Lagos day they were **issued**. Revenue by the Lagos day the backend recorded the payment **PAID** (`payment.paid_at`) |
+| Revenue | **SUCCESS payments only.** DUPLICATE card payments (refund in the Paystack dashboard) and card payments cancelled at the booth are listed apart and **never counted** |
+| Money | Integer kobo as JSON numbers. Counts and sums come from the database |
+| People | `{ id, label }`; a deleted operator stays, labelled `"name (deleted)"` |
+| Locations | `{ id, code, name }` |
+| Never returned | A ticket token, a payment reference, a checkout URL, an access code, Paystack's payload, an audit row's raw detail |
+| Paging | `page` (from 1, default 1) and `pageSize` (1–200, default 50) on the list routes; anything else is 400 |
+| Unknown query fields | 400 |
+
+### CSV (`?format=csv`)
+
+The transactions, incomplete, finance and audit routes also answer a CSV:
+
+- `from` and `to` **both required**, at most **31 days**; else 400.
+- At most **50,000 rows**; more is 400 `More than 50000 rows: narrow the date
+  range or the filters.` A CSV is never cut short.
+- `Content-Type: text/csv; charset=utf-8`,
+  `Content-Disposition: attachment; filename="qrpark-<report>-<from>-to-<to>.csv"`,
+  `Cache-Control: no-store`.
+- UTF-8 with a byte-order mark, CRLF line ends, a header row.
+- Times are Lagos, `YYYY-MM-DD HH:MM`.
+- Money in two columns: `Amount (NGN)` as `500.00` (from kobo by string work,
+  no grouping) and `Amount (kobo)` as `50000`.
+- **Formula injection:** a text cell starting with `=`, `+`, `-`, `@`, a tab or
+  a CR gets a leading `'`. Amount and count cells are never changed.
+
+### `GET /admin/reports/dashboard?day=YYYY-MM-DD` → 200
+
+`day` is optional (today).
+
+```json
+{ "day": "2026-11-09",
+  "tickets": { "issued": 120, "paid": 100, "unpaid": 20, "validated": 90, "inProgress": 25, "neverValidated": 5 },
+  "revenue": { "cash": { "count": 60, "kobo": 3000000 }, "card": { "count": 40, "kobo": 2000000 },
+               "total": { "count": 100, "kobo": 5000000 } },
+  "notRevenue": { "duplicate": { "count": 1, "kobo": 50000 }, "cancelled": { "count": 2, "kobo": 100000 } } }
+```
+
+`tickets` counts tickets issued that day (`inProgress`: not validated and still
+valid; `neverValidated`: not validated, expired). `revenue` is the finance
+total for that day.
+
+### `GET /admin/reports/transactions` → 200 (or CSV)
+
+Query: `from`, `to`, `page`, `pageSize`, and the optional filters
+
+| Filter | Matches |
+|---|---|
+| `q` | the end of the ticket number, 3–8 characters (hyphen ignored), else 400 |
+| `state` | `UNPAID`, `PAID` (paid, not validated, still valid), `VALIDATED`, `EXPIRED` (not validated, past `valid_until`) |
+| `category` | category code on the ticket |
+| `entryGate` / `booth` | location code (the entry gate that issued it / the booth that took the payment) |
+| `method` | `CASH` or `CARD` (of the paying payment) |
+| `operator` | user id: issued it, took the payment or validated it |
+
+Newest first. A row (the ticket and what happened to it):
+
+```json
+{ "id": "uuid", "ticketNumber": "AB2C-D3EF", "categoryCode": "CAR", "categoryName": "Car", "feeKobo": 50000,
+  "issuedAt": "...", "validUntil": "...", "state": "VALIDATED",
+  "entryGate": { "id": "uuid", "code": "ENTRY_1", "name": "Entry 1" }, "issuedBy": { "id": "uuid", "label": "..." },
+  "paymentMethod": "CASH", "paidAt": "...", "booth": { ... }, "paidBy": { ... },
+  "validatedAt": "...", "exitGate": { ... }, "validatedBy": { ... } }
+```
+
+`state` is `VALIDATED`, else `EXPIRED` once past `valid_until`, else `PAID` or
+`UNPAID`. Response: `{ from, to, page, pageSize, total, rows: [...] }`.
+
+CSV columns: `Ticket, Issued (Lagos), Vehicle, Amount (NGN), Amount (kobo),
+Entry gate, Issued by, State, Method, Paid (Lagos), Booth, Paid by, Validated
+(Lagos), Exit gate, Validated by`.
+
+### `GET /admin/reports/transactions/:id` → 200
+
+`:id` is the ticket id. A malformed or unknown id is **404** `No ticket found`.
+
+```json
+{ "ticket": { "...": "a transactions row" },
+  "payments": [ { "id": "uuid", "method": "CARD", "status": "ABANDONED", "amountKobo": 50000,
+                  "createdAt": "...", "paidAt": null, "paystackPaidAt": null,
+                  "booth": { ... }, "operator": { ... },
+                  "cancelledAt": "...", "forced": false, "countedAsRevenue": false } ],
+  "scans": [ { "occurredAt": "...", "kind": "EXIT", "result": "VALID", "gate": { ... }, "operator": { ... } } ],
+  "reprints": [ { "occurredAt": "...", "by": { ... } } ] }
+```
+
+Every payment attempt is listed (`countedAsRevenue` is true for SUCCESS only).
+`cancelledAt` and `forced` come from the `PAYMENT_CANCELLED` audit (null if
+not cancelled).
+
+### `GET /admin/reports/incomplete` → 200 (or CSV)
+
+Tickets issued in the range and **not validated**: `IN_PROGRESS` while still
+valid (today), `NEVER_VALIDATED` once expired. Grouped by issue day, entry
+gate, paying booth (unpaid tickets under `"Unpaid (no booth)"`), issuing
+operator and status.
+
+```json
+{ "from": "...", "to": "...",
+  "groups": [ { "day": "2026-11-08", "entryGate": { ... }, "booth": null, "boothLabel": "Unpaid (no booth)",
+                "operator": { ... }, "status": "NEVER_VALIDATED", "count": 3, "paidCount": 0, "unpaidCount": 3 } ],
+  "totals": { "count": 3, "inProgress": 0, "neverValidated": 3 } }
+```
+
+CSV: one row per ticket. Columns `Ticket, Issued (Lagos), Status, Vehicle,
+Amount (NGN), Amount (kobo), Entry gate, Issued by, Paid, Booth, Paid by`
+(`Status` is `In progress` or `Never validated`).
+
+### `GET /admin/reports/finance` → 200 (or CSV)
+
+SUCCESS payments by the Lagos day they were recorded PAID. Each money value
+is `{ count, kobo }`; each split is `{ cash, card, total }`.
+
+```json
+{ "from": "...", "to": "...",
+  "total": { "cash": { ... }, "card": { ... }, "total": { ... } },
+  "byDay": [ { "day": "2026-11-09", "cash": { ... }, "card": { ... }, "total": { ... } } ],
+  "byBooth": [ { "booth": { ... }, "cash": { ... }, "card": { ... }, "total": { ... } } ],
+  "byOperator": [ { "operator": { ... }, "cash": { ... }, "card": { ... }, "total": { ... } } ],
+  "duplicates": [ { "ticketNumber": "...", "amountKobo": 50000, "paystackPaidAt": "...",
+                    "booth": { ... }, "operator": { ... }, "note": "Not revenue: refund it in the Paystack dashboard." } ],
+  "cancelled": [ { "ticketNumber": "...", "amountKobo": 50000, "cancelledAt": "...", "forced": false,
+                   "booth": { ... }, "operator": { ... } } ] }
+```
+
+`byBooth` and `byOperator` are what the Finance page compares with the
+physical cash. `duplicates`: DUPLICATE card payments whose Paystack paid time
+(else their last update) is in the range. `cancelled`: card payments cancelled
+at the booth in the range and still ABANDONED (one that Paystack later settled
+is revenue, not listed here). Neither is a refund or a correction: they are
+shown so they can be handled off-system (T10).
+
+CSV: one row per payment. Columns `Time (Lagos), Ticket, Method, Status,
+Counted as revenue, Amount (NGN), Amount (kobo), Booth, Operator, Note`
+(`Status` `SUCCESS`, `DUPLICATE` or `CANCELLED`; `Counted as revenue` is `yes`
+for SUCCESS only).
+
+### `GET /admin/audit` → 200 (or CSV)
+
+Query: `from`, `to`, `page`, `pageSize`, `action` (an audit action, else 400),
+`actor` (a user id, else 400). Newest first.
+
+```json
+{ "from": "...", "to": "...", "page": 1, "pageSize": 50, "total": 1,
+  "rows": [ { "id": "uuid", "occurredAt": "...", "action": "CATEGORY_PRICE_CHANGED",
+              "actor": { "id": "uuid", "label": "..." }, "targetType": "category",
+              "detail": [ { "field": "code", "value": "CAR" }, { "field": "priceKobo", "from": 50000, "to": 60000 } ] } ] }
+```
+
+`detail` is an **allow-list** per action, never the raw JSON: scalars only
+(text at most 200 characters), a change as `{ field, from, to }`.
+
+| Action | Fields shown |
+|---|---|
+| `CATEGORY_CREATED` | code, name, priceKobo |
+| `CATEGORY_UPDATED` | code, name, isActive |
+| `CATEGORY_PRICE_CHANGED` | code, priceKobo |
+| `SETTINGS_CHANGED` | displayName, paymentWindowMinutes, receiptOrgName, receiptContactLine |
+| `GATE_CREATED` | code, name, direction |
+| `GATE_UPDATED` | code, name, isActive |
+| `USER_CREATED` | username, role, gateCode |
+| `USER_UPDATED` | username, name, role, gateCode, isActive |
+| `USER_DELETED` | username, role |
+| `USER_PASSWORD_RESET` | username |
+| `TICKET_REPRINTED` | ticketNumber, issuedBy (username only) |
+| `PAYMENT_CASH_CONFIRMED` | ticketNumber, amountKobo (**not** the payment reference) |
+| `PAYMENT_CANCELLED` | ticketNumber, forced |
+
+CSV columns: `Time (Lagos), Action, By, Details` (the allowed fields as
+`field: value; field: from -> to`).
