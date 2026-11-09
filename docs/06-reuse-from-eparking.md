@@ -55,6 +55,7 @@ Lessons already learned there (do not repeat):
 | `(portal)/settings` | Settings page |
 | `(portal)/finance` | Ideas for the dashboard and transaction list |
 | `globals.css`, `public/gsd-logo.png` (at 359c0c1) | Same look; the portal logo |
+| `lib/cookie-names.ts`, `lib/session.ts`, `lib/api.ts`, `lib/auth-actions.ts`, `lib/config*.ts`, `lib/staff*.ts`, `(portal)/icons.tsx`, `(portal)/layout.tsx`, `app/layout.tsx` (added in Sprint 5b, review decision) | What the login, shell, settings and staff pages import: session cookies, the server-side API client, sign-in, configuration and account reads and writes |
 
 ## Deployment
 
@@ -152,3 +153,37 @@ Written new in the fix round: `WebViewRulesTest.kt` (the WebView's source rules)
 
 Exit mode reuses this app's own booth pieces (ScanTextField, ScannerKeys,
 ScanActivity, ScanHand); nothing else was copied in 4c.
+
+## Copied in Sprint 5b (from eparking 359c0c1)
+
+The Admin Portal shell and configuration pages. The eparking-only parts were
+left out: passes, pass plans, pricing periods, devices, the FINANCE role, the
+dashboard (5c) and the cursor pager (5c, if needed). "Unchanged" means
+byte-identical.
+
+| qrpark file | Source in eparking (`admin/`) | What changed |
+|---|---|---|
+| `admin/app/(portal)/icons.tsx` | `app/(portal)/icons.tsx` | Unchanged |
+| `admin/app/(portal)/ui.tsx` | `app/(portal)/ui.tsx` | Unchanged |
+| `admin/app/(portal)/settings/form-bits.tsx` | `app/(portal)/settings/form-bits.tsx` | Unchanged |
+| `admin/public/gsd-logo.png` | `public/gsd-logo.png` | Unchanged |
+| `admin/app/globals.css` | `app/globals.css` | System fonts instead of the Google faces (nothing fetched from a third party); tokens, themes and shell grid unchanged |
+| `admin/app/layout.tsx` | `app/layout.tsx` | No `next/font/google`; theme key `qrpark-theme`; title |
+| `admin/app/(portal)/shell.tsx` | `app/(portal)/shell.tsx` | Storage keys `qrpark-sidebar`/`qrpark-theme`; "QR Parking · Admin"; the header shows the username (no email) |
+| `admin/app/(portal)/layout.tsx` | `app/(portal)/layout.tsx` | ADMIN only (`mayUsePortal`); qrpark's nav (Overview, Configuration, Operators); site name from the sign-in answer, not `NEXT_PUBLIC_SITE_NAME`; `force-dynamic` |
+| `admin/app/login/page.tsx`, `login-form.tsx` | `app/login/page.tsx`, `login-form.tsx` | Username, not email; QR Parking wording; no site-name environment variable |
+| `admin/middleware.ts` | `middleware.ts` | eparking only checked a cookie was present. This one also refreshes an expired access cookie once and writes the new pair; a refused refresh clears every cookie and goes to /login; an unreachable backend keeps the session; on /login a live session returns to the portal; `runtime: 'nodejs'` |
+| `admin/lib/cookie-names.ts` | `lib/cookie-names.ts` | `qp_` names with the `__Host-` prefix in production; the cookie options moved here (httpOnly, SameSite=Lax, Secure in production, path /, no Domain); access cookie 14 minutes (dies before the 15-minute token) |
+| `admin/lib/session.ts` | `lib/session.ts` | Options and names from `cookie-names.ts`; `PortalUser` with username and site name; `PORTAL_ROLES` replaced by `mayUsePortal` (ADMIN only) |
+| `admin/lib/api.ts` | `lib/api.ts` | Backend address from the server-only `QRPARK_API_URL` (`lib/backend-url.ts`, new) instead of `NEXT_PUBLIC_API_URL`; login by username; `logout()` added; an ended session clears the cookies and redirects to /login; the "cannot reach" message no longer names the backend's address; `publicApi` dropped |
+| `admin/lib/auth-actions.ts` | `lib/auth-actions.ts` | Username; ADMIN only, nothing stored for an operator account; sign-out also ends the admin's sessions at the backend (`POST /auth/logout`) |
+| `admin/lib/config.ts`, `config-types.ts`, `config-actions.ts` | `lib/config.ts`, `config-types.ts`, `config-actions.ts` | qrpark's `/admin/categories`, `/admin/settings`, `/admin/gates`; a category's flat price (`changePrice`); three location kinds; `naira()` by string work; `koboFromNaira()` by digits; `lagosTime()`; pricing rules, pass plans, devices and site-config fields dropped |
+| `admin/lib/users.ts`, `users-types.ts`, `users-actions.ts` | `lib/staff.ts`, `staff-types.ts`, `staff-actions.ts` | Usernames; four roles, each with one location of its kind (`operatorProblem`); `passwordProblem` (12+); `lockoutWarning` (yourself, the last active admin); delete (soft) added; no message ever names the password; dashboard shapes dropped |
+| `admin/app/(portal)/operators/page.tsx`, `operators-manager.tsx` | `app/(portal)/staff/page.tsx`, `staff-manager.tsx` | Job and location together (location choices follow the job); deactivate; delete with a confirm step; password reset in a password field that starts empty |
+| `admin/app/(portal)/settings/layout.tsx`, `page.tsx`, `settings-form.tsx` | `app/(portal)/settings/layout.tsx`, `page.tsx`, `site-config-form.tsx` | qrpark's three tabs; site name, ticket lines, payment window, Paystack mode read-only; the FINANCE banner dropped |
+| `admin/app/(portal)/settings/categories/page.tsx`, `categories-manager.tsx` | `app/(portal)/settings/categories/page.tsx`, `categories-manager.tsx` | A flat price per vehicle type with "Set price" ("applies to new tickets"); readOnly mode dropped |
+| `admin/app/(portal)/settings/locations/page.tsx`, `locations-manager.tsx` | `app/(portal)/settings/gates/page.tsx`, `gates-manager.tsx` | Entry gates, booths, exit gates; devices dropped |
+
+Written new in Sprint 5b: `admin/lib/backend-url.ts`, `admin/app/(portal)/page.tsx`
+(the overview), `admin/next.config.mjs` (security headers), and the tests
+`admin/tests/rules.test.ts` and `admin/tests/source-scan.test.ts`.

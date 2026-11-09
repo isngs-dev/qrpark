@@ -1,1 +1,340 @@
 @import "tailwindcss";
+
+/* Adapted from eparking admin/app/globals.css (359c0c1): system fonts instead
+   of the Google faces; tokens, themes and shell grid unchanged. */
+
+/**
+ * The console's design tokens.
+ *
+ * Three layers, in this order, and the order is what makes the toggle work:
+ *
+ *   :root                            light, unconditionally
+ *   @media (prefers-color-scheme)    dark, unless the reader chose light
+ *   :root[data-theme="dark"]         dark, because the reader chose it
+ *
+ * The media block is guarded with :not([data-theme="light"]) so an explicit
+ * light choice survives a dark system setting. Without that guard the toggle
+ * would work in one direction only.
+ *
+ * Every colour is defined on bare :root first. A colour whose only definition
+ * lives inside a media query has no value at all for a reader whose system
+ * expresses no preference.
+ */
+
+:root {
+  color-scheme: light;
+
+  --ink: #171b24;
+  --ink-soft: #565f70;
+  --paper: #f4f6f9;
+  --surface: #ffffff;
+  --surface-sunk: #f8fafc;
+  --line: #dde2ea;
+  --line-soft: #eaedf2;
+
+  /* The interactive accent. Never a status, never a data series.
+     GSD E-Parking Solution teal: the dark teal, because the accent is always
+     small TEXT here (6.2:1 on surface, 5.5:1 on its wash); the brand's
+     #168A99 is 4.1:1 on white, under AA for text. It replaced an ochre that
+     sat beside amber-pending almost indistinguishably. */
+  --accent: #0e6b77;
+  --accent-wash: #e0f5f6;
+
+  /* Brand. The primary fill (white text on it 10.9:1), and the plate the
+     logo sits on: WHITE IN EVERY THEME, because the logo's lettering is navy
+     and disappears on a dark surface. */
+  --brand: #353a62;
+  --plate: #ffffff;
+
+  /* Status. Reserved for state - never borrowed for a chart. */
+  --good: #1f7a5c;
+  --good-wash: #e2f3ec;
+  --bad: #b8402f;
+  --bad-wash: #fbe8e4;
+  --pending: #3f5d8a;
+  --pending-wash: #e7edf6;
+
+  /* Data-series identity. Never a status, never the accent. */
+  --series-parking: #2a78d6;
+  --series-passes: #eb6834;
+  /* A stack needs one colour per category, and a site chooses its own
+     categories - so the ramp is long enough for a realistic board and wraps
+     rather than running out. Series identity only, never status. */
+  --series-3: #2f9e8f;
+  --series-4: #8a63d2;
+  --series-5: #c2a010;
+  --grid: #e7eaf0;
+
+  /* Disabled: a control that exists and cannot be used right now. */
+  --muted: #94a3b8;
+  --muted-wash: #f1f5f9;
+
+  --focus: #2a78d6;
+
+  --header-h: 56px;
+  --sidebar-w: 226px;
+
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-pill: 999px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --ink: #edeef2;
+    --ink-soft: #9aa3b5;
+    --paper: #12151c;
+    --surface: #1a1e28;
+    --surface-sunk: #161a22;
+    --line: #2b303d;
+    --line-soft: #22262f;
+
+    --accent: #5cc6d1;
+    --accent-wash: #123338;
+
+    /* Navy is 1.5:1 against a dark card, so the fill lightens (white on it
+       5.6:1). The plate stays white - the logo is never on a dark surface. */
+    --brand: #5a62a8;
+    --plate: #ffffff;
+
+    --good: #4bb894;
+    --good-wash: #17332a;
+    --bad: #e2796a;
+    --bad-wash: #3a2220;
+    --pending: #8fadd9;
+    --pending-wash: #1f2b3d;
+
+    --series-parking: #3987e5;
+    --series-passes: #d95926;
+    --series-3: #3fb3a2;
+    --series-4: #a37fe0;
+    --series-5: #d9b520;
+    --grid: #262b36;
+
+    --muted: #6b7484;
+    --muted-wash: #1d222b;
+
+    --focus: #6aa9f0;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --ink: #edeef2;
+  --ink-soft: #9aa3b5;
+  --paper: #12151c;
+  --surface: #1a1e28;
+  --surface-sunk: #161a22;
+  --line: #2b303d;
+  --line-soft: #22262f;
+
+  --accent: #5cc6d1;
+  --accent-wash: #123338;
+
+  --brand: #5a62a8;
+  --plate: #ffffff;
+
+  --good: #4bb894;
+  --good-wash: #17332a;
+  --bad: #e2796a;
+  --bad-wash: #3a2220;
+  --pending: #8fadd9;
+  --pending-wash: #1f2b3d;
+
+  --series-parking: #3987e5;
+  --series-passes: #d95926;
+  --series-3: #3fb3a2;
+  --series-4: #a37fe0;
+  --series-5: #d9b520;
+  --grid: #262b36;
+
+  --muted: #6b7484;
+  --muted-wash: #1d222b;
+
+  --focus: #6aa9f0;
+}
+
+/**
+ * Exposed to Tailwind as utilities.
+ *
+ * `inline` matters: it makes a utility emit `var(--ink)` rather than baking
+ * today's hex into the stylesheet. That is what lets one class follow the
+ * theme instead of needing a dark: variant on every element.
+ */
+@theme inline {
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-surface-sunk: var(--surface-sunk);
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+
+  --color-accent: var(--accent);
+  --color-accent-wash: var(--accent-wash);
+
+  --color-brand: var(--brand);
+  --color-plate: var(--plate);
+
+  --color-good: var(--good);
+  --color-good-wash: var(--good-wash);
+  --color-bad: var(--bad);
+  --color-bad-wash: var(--bad-wash);
+  --color-pending: var(--pending);
+  --color-pending-wash: var(--pending-wash);
+
+  --color-series-parking: var(--series-parking);
+  --color-series-passes: var(--series-passes);
+  --color-series-3: var(--series-3);
+  --color-series-4: var(--series-4);
+  --color-series-5: var(--series-5);
+  --color-grid: var(--grid);
+
+  --color-muted: var(--muted);
+  --color-muted-wash: var(--muted-wash);
+
+  /* System faces (qrpark): no web fonts, so nothing is fetched from a third
+     party at build or run time. */
+  --font-display: system-ui, 'Segoe UI', Roboto, sans-serif;
+  --font-sans: system-ui, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+
+  --radius-card: var(--radius);
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  text-wrap: balance;
+}
+
+/**
+ * A visible focus ring everywhere, on keyboard focus only.
+ *
+ * The reference mockup had none at all, which makes the whole console
+ * unusable without a mouse - every control below is reachable by tab, and a
+ * reader has to be able to see where they are.
+ */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/**
+ * The theme toggle's icon, swapped by the same cascade as the tokens.
+ *
+ * Deliberately not Tailwind's `dark:` variant, which follows
+ * prefers-color-scheme alone and would show the wrong icon to anyone who had
+ * overridden their system setting. Doing it in CSS rather than in an effect
+ * also means the server renders the correct icon, with no flash on hydration.
+ */
+.theme-icon-dark {
+  display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .theme-icon-light {
+    display: none;
+  }
+  :root:not([data-theme='light']) .theme-icon-dark {
+    display: block;
+  }
+}
+
+:root[data-theme='dark'] .theme-icon-light {
+  display: none;
+}
+:root[data-theme='dark'] .theme-icon-dark {
+  display: block;
+}
+
+/**
+ * Form controls follow the theme.
+ *
+ * Done once here rather than as a class on every input in the console, because
+ * the failure is systemic rather than per-screen: a control with no background
+ * of its own sits on whatever is behind it, and a control with no colour
+ * inherits `--ink`. In dark theme that produced near-white text on a control
+ * the browser still painted light - the same mismatch that made the KPI
+ * figures unreadable.
+ *
+ * Every screen gets this, including the ones nobody has restyled yet.
+ */
+input,
+select,
+textarea {
+  background-color: var(--surface);
+  color: var(--ink);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--muted);
+}
+
+/**
+ * The shell grid.
+ *
+ * In CSS rather than an inline style, because the sidebar column is only real
+ * on a wide screen. Below `md` the sidebar is position:fixed and slides over
+ * the content as a drawer, so reserving a 226px column for it leaves a 226px
+ * hole and squeezes the page into whatever is left - on a 356px screen that
+ * was 114px of usable width.
+ *
+ * An inline style cannot carry a media query, which is exactly why this moved
+ * out of the component. The collapsed state stays an attribute so React still
+ * owns it.
+ */
+.portal-shell {
+  display: grid;
+  /* ONE track on mobile, not a 0px one beside it. The sidebar is
+     position:fixed at this width, which takes it out of flow entirely - so
+     `main` becomes the first grid item, and a leading 0px track would put the
+     whole page in a column with no width to overflow out of. */
+  grid-template-columns: 1fr;
+  min-height: calc(100vh - var(--header-h));
+}
+
+@media (min-width: 768px) {
+  .portal-shell {
+    grid-template-columns: var(--sidebar-w) 1fr;
+    transition: grid-template-columns 0.16s ease;
+  }
+
+  .portal-shell[data-collapsed='true'] {
+    grid-template-columns: 0px 1fr;
+  }
+}
+
+/** Tabular figures wherever a number is read as a quantity, not a word. */
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/**
+ * Motion is an affordance, not decoration - honour a reader who has asked for
+ * less of it. The sidebar still opens; it just stops sliding.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

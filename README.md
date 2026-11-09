@@ -85,8 +85,13 @@ DATABASE_URL=postgresql://qrpark:qrpark@localhost:5433/qrpark_test REDIS_URL=red
 
 ### Admin Portal and Android
 
-Admin Portal: `cd admin && npm ci && npm run dev` (http://localhost:3000;
-start it on another port if the backend is running, e.g. `npx next dev -p 3001`).
+Admin Portal: `cd admin && npm ci && npm run dev -- -p 3001` (the backend
+keeps port 3000). The portal calls the backend from its own server at
+`QRPARK_API_URL` (default `http://localhost:3000`): a server-only variable,
+never `NEXT_PUBLIC_`, because the browser never talks to the backend. Only
+ADMIN accounts sign in. `npm test` runs the portal's rule tests and source
+scan; `npm run build && npm start -- -p 3001` runs it as in production
+(Secure `__Host-` cookies).
 
 Android: see `android/BUILDING.md` (JDK 21, Gradle 8.9). The debug APK is
 `android/app/build/apk/qrpark-<version>-debug.apk`; it talks to the backend
