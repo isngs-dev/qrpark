@@ -26,6 +26,15 @@ const val DO_NOT_LET_OUT = "Do not let the vehicle out on this screen. Tap Valid
 
 private val DATE: DateTimeFormatter = DateTimeFormatter.ofPattern("dd MMM yyyy", Locale.UK).withZone(ZoneId.of("Africa/Lagos"))
 
+private val CLOCK: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm", Locale.UK).withZone(ZoneId.of("Africa/Lagos"))
+
+/** The backend's UTC instant as a Lagos time of day: "16:00". "?" if unreadable. */
+private fun lagosClock(iso: String): String = try {
+    CLOCK.format(Instant.parse(iso))
+} catch (_: DateTimeParseException) {
+    "?"
+}
+
 private fun lagosDate(iso: String?): String = try {
     if (iso == null) "?" else DATE.format(Instant.parse(iso))
 } catch (_: DateTimeParseException) {
@@ -48,9 +57,16 @@ fun exitView(reply: CheckReply): ExitView = when (reply) {
             )
             "ALREADY_USED" ->
                 if (reply.usedByYou) {
+                    // E1: after a lost reply the operator never saw Valid; the body says only what the
+                    // backend knows - this operator's earlier attempt closed the ticket.
+                    val closed = listOfNotNull(reply.usedAt?.let(::lagosClock), reply.usedGateName?.let { "at $it" }).joinToString(" ")
                     ExitView(
                         ExitTone.RED, "Already used — by you",
-                        listOfNotNull("You let this vehicle out at $at. Do not let it out again.", number), ExitKind.ALREADY_USED_BY_YOU,
+                        listOfNotNull(
+                            "Closed by you at $closed. If your last attempt showed 'Cannot verify', that attempt went through.",
+                            number,
+                        ),
+                        ExitKind.ALREADY_USED_BY_YOU,
                     )
                 } else {
                     val by = reply.usedByName?.let { " by $it" }.orEmpty()

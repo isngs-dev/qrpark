@@ -53,7 +53,12 @@ class ExitRulesTest {
         assertEquals(ExitKind.ALREADY_USED_BY_YOU, byYou.kind)
         assertEquals(ExitTone.RED, byYou.tone)
         assertEquals("Already used — by you", byYou.title)
-        assertEquals(listOf("You let this vehicle out at 07 Nov 2026 16:00 at Exit 1. Do not let it out again.", "Ticket K7MP-3QZ9"), byYou.lines)
+        // E1: after a lost reply the operator never saw Valid, so the body must not say they let the vehicle out.
+        assertEquals(
+            listOf("Closed by you at 16:00 at Exit 1. If your last attempt showed 'Cannot verify', that attempt went through.", "Ticket K7MP-3QZ9"),
+            byYou.lines,
+        )
+        assertFalse(byYou.lines.any { it.contains("let this vehicle out", ignoreCase = true) })
         assertNotEquals(valid.tone, byYou.tone)
         assertNotEquals(valid.title, byYou.title)
         assertFalse(byYou.title.contains("Valid"))
