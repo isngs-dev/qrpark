@@ -459,34 +459,57 @@ test('a price change shows at entry at once and never changes a ticket already i
 
 // ================================================================ no secrets anywhere
 
-test('no report, detail or CSV carries a token, a payment reference, a checkout URL, an access code or Paystack payload', async () => {
-  // A card payment with a real (fake-Paystack) checkout URL and access code, then cancelled.
+test('our payment reference is shown where an admin needs it; never a token, checkout URL, access code, authorization code or Paystack payload', async () => {
+  // A card payment with a real (fake-Paystack) checkout URL and access code, then abandoned.
   const tk = await ticket({ operatorId: t.users.entry.id, gateId: t.entryGateId, categoryId: (await category()).id });
   const start = await startCard(t, t.users.booth.id, { ticketId: tk.id });
   assert.equal(start.status, 201, JSON.stringify(start.body));
   const row = await t.prisma.payment.findUniqueOrThrow({ where: { id: start.body.id } });
   assert.ok(row.authorizationUrl && row.accessCode);
   await t.prisma.payment.update({ where: { id: row.id }, data: { status: 'ABANDONED' } });
+  // A cash payment, then a DUPLICATE card payment on the same ticket carrying a Paystack payload with an authorization code.
+  const w = await world();
+  const tkD = await ticket({ operatorId: w.entryOp.id, gateId: w.entryGate.id, categoryId: w.cat.id });
+  const cashPay = await pay(tkD, { method: 'CASH', boothId: w.booth.id, operatorId: w.boothOp.id });
+  const dup = await pay(tkD, { method: 'CARD', boothId: w.booth.id, operatorId: w.boothOp.id, status: 'DUPLICATE' });
+  const authCode = `AUTH_${randomBytes(6).toString('hex')}`;
+  await t.prisma.$executeRawUnsafe(
+    `UPDATE payment SET paystack_event = jsonb_build_object('reference', reference, 'authorization', jsonb_build_object('authorization_code', $2::text, 'last4', '4081')) WHERE id = $1::uuid`,
+    dup.id, authCode,
+  );
 
+  // Present where listed.
+  const detail = await admin(`/admin/reports/transactions/${tk.id}`);
+  assert.equal(detail.body.payments.find((p: { id: string }) => p.id === row.id).reference, row.reference, 'detail: the reference');
+  const fin = await admin(`/admin/reports/finance?from=${today}&to=${today}`);
+  assert.equal(fin.body.duplicates.find((d: { ticketNumber: string }) => d.ticketNumber === tkD.ticketNumber).reference, dup.reference, 'finance: the DUPLICATE reference');
+  const finCsv = (await csv(`/admin/reports/finance?from=${today}&to=${today}&format=csv`)).text;
+  assert.ok(finCsv.split('\r\n')[0].includes(',Reference,'), 'finance CSV: a Reference column');
+  assert.ok(finCsv.includes(`,${cashPay.reference},`), 'finance CSV: the SUCCESS row has its reference');
+  assert.ok(finCsv.includes(`,${dup.reference},`), 'finance CSV: the DUPLICATE row has its reference');
+
+  // Absent everywhere.
   const tokens = (await t.prisma.ticket.findMany({ where: { siteId: t.siteId }, select: { token: true } })).map((x) => x.token);
-  const refs = (await t.prisma.payment.findMany({ where: { siteId: t.siteId }, select: { reference: true } })).map((p) => p.reference);
   const paths = [
     '/admin/reports/dashboard',
     `/admin/reports/transactions?from=${yesterday}&to=${today}&pageSize=200`,
     `/admin/reports/transactions/${tk.id}`,
+    `/admin/reports/transactions/${tkD.id}`,
     `/admin/reports/incomplete?from=${yesterday}&to=${today}`,
     `/admin/reports/finance?from=${yesterday}&to=${today}`,
+    `/admin/audit?from=${yesterday}&to=${today}&pageSize=200`,
     `/admin/reports/transactions?from=${yesterday}&to=${today}&format=csv`,
     `/admin/reports/incomplete?from=${yesterday}&to=${today}&format=csv`,
     `/admin/reports/finance?from=${yesterday}&to=${today}&format=csv`,
+    `/admin/audit?from=${yesterday}&to=${today}&format=csv`,
   ];
   for (const p of paths) {
     const r = await csv(p);
     assert.equal(r.status, 200, `${p}: ${r.text.slice(0, 200)}`);
     assert.ok(!tokens.some((x) => r.text.includes(x)), `${p}: a token`);
-    assert.ok(!refs.some((x) => r.text.includes(x)), `${p}: a payment reference`);
     assert.ok(!r.text.includes(row.authorizationUrl!), `${p}: the checkout URL`);
     assert.ok(!r.text.includes(row.accessCode!), `${p}: the access code`);
-    assert.ok(!/authorization_code|"authorization"|last4|paystack_?event/i.test(r.text), `${p}: Paystack payload`);
+    assert.ok(!r.text.includes(authCode), `${p}: the authorization code`);
+    assert.ok(!/authorization_?code|"authorization"|last4|paystack_?event|access_?code|authorization_?url/i.test(r.text), `${p}: Paystack payload or internals`);
   }
 });

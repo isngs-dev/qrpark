@@ -20,8 +20,9 @@ import {
  * The admin reports (Sprint 5a, docs/api.md "Admin: reports"). READ-ONLY:
  * nothing here writes. Money is integer kobo from the database; the CSV turns
  * it into naira by string work (nairaPlain). Days are Lagos days on the
- * database clock. Never returned: a ticket token, a payment reference (T10),
- * a checkout URL, an access code, Paystack's payload. A deleted operator stays, as "name (deleted)".
+ * database clock. Our own payment reference (QRP_...) IS returned, so the admin
+ * can find a payment in the Paystack dashboard (T10, closed). Never returned: a
+ * ticket token, a checkout URL, an access code, Paystack's payload. A deleted operator stays, as "name (deleted)".
  *
  * Attribution (review decisions, Sprint 5):
  *   tickets   by the Lagos day they were ISSUED
@@ -247,7 +248,7 @@ export class ReportsService {
     );
     if (!row) throw new NotFoundException('No ticket found');
     const payments = await this.prisma.$queryRawUnsafe<Array<Record<string, any>>>(
-      `SELECT p.id::text AS id, p.method::text AS method, p.status::text AS status, p.amount_kobo,
+      `SELECT p.id::text AS id, p.reference, p.method::text AS method, p.status::text AS status, p.amount_kobo,
               p.created_at, p.paid_at, p.paystack_paid_at,
               g.id::text AS g_id, g.code AS g_code, g.name AS g_name, u.id::text AS u_id, u.name AS u_name, u.deleted_at AS u_del,
               a.occurred_at AS cancelled_at, (a.detail->>'forced')::boolean AS forced
@@ -277,6 +278,9 @@ export class ReportsService {
       ticket: this.txRow(row),
       payments: payments.map((p) => ({
         id: p.id as string,
+        // Our own reference (Paystack's transaction reference for a card): how a payment is found
+        // in the Paystack dashboard, e.g. to refund a DUPLICATE. Nothing else of Paystack's is returned.
+        reference: p.reference as string,
         method: p.method as string,
         status: p.status as string,
         amountKobo: n(p.amount_kobo),
@@ -424,7 +428,7 @@ export class ReportsService {
   /** DUPLICATE (to refund) and cancelled card payments in [r]: listed, never counted as revenue. */
   private async notRevenue(siteId: string, r: Range) {
     const duplicates = await this.prisma.$queryRawUnsafe<Array<any>>(
-      `SELECT t.ticket_number, p.amount_kobo, p.paystack_paid_at, p.updated_at,
+      `SELECT p.reference, t.ticket_number, p.amount_kobo, p.paystack_paid_at, p.updated_at,
               g.id::text AS g_id, g.code AS g_code, g.name AS g_name, u.id::text AS u_id, u.name AS u_name, u.deleted_at AS u_del
          FROM payment p JOIN ticket t ON t.id = p.ticket_id JOIN gate g ON g.id = p.gate_id JOIN app_user u ON u.id = p.operator_id
         WHERE p.site_id = $1::uuid AND p.status = 'DUPLICATE' AND ${inRange('COALESCE(p.paystack_paid_at, p.updated_at)', 2, 3)}
@@ -432,7 +436,7 @@ export class ReportsService {
       siteId, r.from, r.to,
     );
     const cancelled = await this.prisma.$queryRawUnsafe<Array<any>>(
-      `SELECT t.ticket_number, p.amount_kobo, a.occurred_at, (a.detail->>'forced')::boolean AS forced,
+      `SELECT p.reference, t.ticket_number, p.amount_kobo, a.occurred_at, (a.detail->>'forced')::boolean AS forced,
               g.id::text AS g_id, g.code AS g_code, g.name AS g_name, u.id::text AS u_id, u.name AS u_name, u.deleted_at AS u_del
          FROM audit_log a JOIN payment p ON p.id::text = a.target_id AND a.target_type = 'payment'
          JOIN ticket t ON t.id = p.ticket_id JOIN gate g ON g.id = p.gate_id JOIN app_user u ON u.id = p.operator_id
@@ -442,6 +446,7 @@ export class ReportsService {
     );
     return {
       duplicates: duplicates.map((d) => ({
+        reference: d.reference as string,
         ticketNumber: d.ticket_number as string,
         amountKobo: n(d.amount_kobo),
         paystackPaidAt: (d.paystack_paid_at as Date | null) ?? null,
@@ -450,6 +455,7 @@ export class ReportsService {
         note: 'Not revenue: refund it in the Paystack dashboard.',
       })),
       cancelled: cancelled.map((c) => ({
+        reference: c.reference as string,
         ticketNumber: c.ticket_number as string,
         amountKobo: n(c.amount_kobo),
         cancelledAt: c.occurred_at as Date,
@@ -469,23 +475,23 @@ export class ReportsService {
     const cap = rowCapProblem(n(total));
     if (cap) throw new BadRequestException(cap);
     const paid = await this.prisma.$queryRawUnsafe<Array<any>>(
-      `SELECT p.paid_at, t.ticket_number, p.method::text AS method, p.amount_kobo, g.name AS g_name, u.name AS u_name, u.deleted_at AS u_del
+      `SELECT p.paid_at, t.ticket_number, p.method::text AS method, p.amount_kobo, p.reference, g.name AS g_name, u.name AS u_name, u.deleted_at AS u_del
          FROM payment p JOIN ticket t ON t.id = p.ticket_id JOIN gate g ON g.id = p.gate_id JOIN app_user u ON u.id = p.operator_id
         WHERE p.site_id = $1::uuid AND p.status = 'SUCCESS' AND ${inRange('p.paid_at', 2, 3)} ORDER BY p.paid_at`,
       siteId, r.from, r.to,
     );
     const { duplicates, cancelled } = await this.notRevenue(siteId, r);
-    const line = (at: Date | null, ticket: string, method: string, status: string, counted: boolean, kobo: number, booth: string | undefined, op: string | undefined, note: string) => [
+    const line = (at: Date | null, ticket: string, method: string, status: string, counted: boolean, kobo: number, booth: string | undefined, op: string | undefined, ref: string, note: string) => [
       csvCell(lagosStamp(at), 'text'), csvCell(ticket, 'text'), csvCell(method, 'text'), csvCell(status, 'text'),
       csvCell(counted ? 'yes' : 'no', 'text'), csvCell(nairaPlain(kobo), 'amount'), csvCell(String(kobo), 'int'),
-      csvCell(booth, 'text'), csvCell(op, 'text'), csvCell(note, 'text'),
+      csvCell(booth, 'text'), csvCell(op, 'text'), csvCell(ref, 'text'), csvCell(note, 'text'),
     ];
     return csvDocument(
-      ['Time (Lagos)', 'Ticket', 'Method', 'Status', 'Counted as revenue', 'Amount (NGN)', 'Amount (kobo)', 'Booth', 'Operator', 'Note'],
+      ['Time (Lagos)', 'Ticket', 'Method', 'Status', 'Counted as revenue', 'Amount (NGN)', 'Amount (kobo)', 'Booth', 'Operator', 'Reference', 'Note'],
       [
-        ...paid.map((p) => line(p.paid_at, p.ticket_number, p.method, 'SUCCESS', true, n(p.amount_kobo), p.g_name, personLabel(p.u_name, p.u_del), '')),
-        ...duplicates.map((d) => line(d.paystackPaidAt, d.ticketNumber, 'CARD', 'DUPLICATE', false, d.amountKobo, d.booth?.name, d.operator?.label, d.note)),
-        ...cancelled.map((c) => line(c.cancelledAt, c.ticketNumber, 'CARD', 'CANCELLED', false, c.amountKobo, c.booth?.name, c.operator?.label, c.forced ? 'Cancelled (forced: Paystack could not be reached)' : 'Cancelled at the booth')),
+        ...paid.map((p) => line(p.paid_at, p.ticket_number, p.method, 'SUCCESS', true, n(p.amount_kobo), p.g_name, personLabel(p.u_name, p.u_del), p.reference, '')),
+        ...duplicates.map((d) => line(d.paystackPaidAt, d.ticketNumber, 'CARD', 'DUPLICATE', false, d.amountKobo, d.booth?.name, d.operator?.label, d.reference, d.note)),
+        ...cancelled.map((c) => line(c.cancelledAt, c.ticketNumber, 'CARD', 'CANCELLED', false, c.amountKobo, c.booth?.name, c.operator?.label, c.reference, c.forced ? 'Cancelled (forced: Paystack could not be reached)' : 'Cancelled at the booth')),
       ],
     );
   }

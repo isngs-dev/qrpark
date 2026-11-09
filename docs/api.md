@@ -4,7 +4,7 @@
 in the same commit as any endpoint change. If it and the code disagree, say
 which is wrong.
 
-Created: Sprint 1. Last change: Sprint 5a (the admin reports and the audit view, read-only). Before that, Sprint 4b (`POST /payments/:id/cancel`), and Sprint R (the booth flow: tickets at entry, cash and card at the booth, exit requires PAID). The access column is enforced by the global guard and
+Created: Sprint 1. Last change: Sprint 5a-fix (the admin reports show our payment reference, T10). Before that, Sprint 5a (the admin reports and the audit view, read-only). Before that, Sprint 4b (`POST /payments/:id/cancel`), and Sprint R (the booth flow: tickets at entry, cash and card at the booth, exit requires PAID). The access column is enforced by the global guard and
 pinned by `backend/src/auth/routes.lifecycle.test.ts`, which fails if a route
 is added without being listed there.
 
@@ -670,7 +670,8 @@ are no refunds, reversals or corrections anywhere.
 | Money | Integer kobo as JSON numbers. Counts and sums come from the database |
 | People | `{ id, label }`; a deleted operator stays, labelled `"name (deleted)"` |
 | Locations | `{ id, code, name }` |
-| Never returned | A ticket token, a payment reference, a checkout URL, an access code, Paystack's payload, an audit row's raw detail |
+| Payment reference | Our own reference (`QRP_...`, also Paystack's transaction reference for a card) **is shown** in the transaction detail's payments, the finance `duplicates` and `cancelled` lists and every finance CSV row, so the admin can find a payment in the Paystack dashboard and reconcile (T10, decided 2026-11-09). The audit view still does not show it |
+| Never returned | A ticket token, a checkout URL, an access code, an authorization code, Paystack's payload, scanned text, an audit row's raw detail |
 | Paging | `page` (from 1, default 1) and `pageSize` (1–200, default 50) on the list routes; anything else is 400 |
 | Unknown query fields | 400 |
 
@@ -743,7 +744,7 @@ Entry gate, Issued by, State, Method, Paid (Lagos), Booth, Paid by, Validated
 
 ```json
 { "ticket": { "...": "a transactions row" },
-  "payments": [ { "id": "uuid", "method": "CARD", "status": "ABANDONED", "amountKobo": 50000,
+  "payments": [ { "id": "uuid", "reference": "QRP_...", "method": "CARD", "status": "ABANDONED", "amountKobo": 50000,
                   "createdAt": "...", "paidAt": null, "paystackPaidAt": null,
                   "booth": { ... }, "operator": { ... },
                   "cancelledAt": "...", "forced": false, "countedAsRevenue": false } ],
@@ -784,9 +785,9 @@ is `{ count, kobo }`; each split is `{ cash, card, total }`.
   "byDay": [ { "day": "2026-11-09", "cash": { ... }, "card": { ... }, "total": { ... } } ],
   "byBooth": [ { "booth": { ... }, "cash": { ... }, "card": { ... }, "total": { ... } } ],
   "byOperator": [ { "operator": { ... }, "cash": { ... }, "card": { ... }, "total": { ... } } ],
-  "duplicates": [ { "ticketNumber": "...", "amountKobo": 50000, "paystackPaidAt": "...",
+  "duplicates": [ { "reference": "QRP_...", "ticketNumber": "...", "amountKobo": 50000, "paystackPaidAt": "...",
                     "booth": { ... }, "operator": { ... }, "note": "Not revenue: refund it in the Paystack dashboard." } ],
-  "cancelled": [ { "ticketNumber": "...", "amountKobo": 50000, "cancelledAt": "...", "forced": false,
+  "cancelled": [ { "reference": "QRP_...", "ticketNumber": "...", "amountKobo": 50000, "cancelledAt": "...", "forced": false,
                    "booth": { ... }, "operator": { ... } } ] }
 ```
 
@@ -795,10 +796,11 @@ physical cash. `duplicates`: DUPLICATE card payments whose Paystack paid time
 (else their last update) is in the range. `cancelled`: card payments cancelled
 at the booth in the range and still ABANDONED (one that Paystack later settled
 is revenue, not listed here). Neither is a refund or a correction: they are
-shown so they can be handled off-system (T10).
+shown, with their reference, so they can be handled off-system in the Paystack
+dashboard.
 
 CSV: one row per payment. Columns `Time (Lagos), Ticket, Method, Status,
-Counted as revenue, Amount (NGN), Amount (kobo), Booth, Operator, Note`
+Counted as revenue, Amount (NGN), Amount (kobo), Booth, Operator, Reference, Note`
 (`Status` `SUCCESS`, `DUPLICATE` or `CANCELLED`; `Counted as revenue` is `yes`
 for SUCCESS only).
 
