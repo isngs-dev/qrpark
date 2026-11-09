@@ -142,3 +142,13 @@ the payment.
 | `android/app/src/main/res/values/strings.xml` (the `checkout_*` strings) | `android/pos/app/src/main/res/values/strings.xml` | Reworded for the booth; "sandbox" dropped from the title; `checkout_not_paystack` added |
 
 Written new in the fix round: `WebViewRulesTest.kt` (the WebView's source rules).
+
+## Copied in Sprint 4c (from eparking 359c0c1)
+
+| qrpark file | Source in eparking | What changed |
+|---|---|---|
+| `android/app/build.gradle.kts` (the `signingConfigs` block and `signingConfig = signingConfigs.findByName("release")`) | `android/pos/app/build.gradle.kts` | `qrpark.signing.*` property names; nothing else |
+| `android/BUILDING.md` ("The signing key") | `android/BUILDING.md` ("The signing key (one-time, by hand)") | One app; `qrpark-release` alias and folder; the vendor wording dropped; "you make and back up your own key" |
+
+Exit mode reuses this app's own booth pieces (ScanTextField, ScannerKeys,
+ScanActivity, ScanHand); nothing else was copied in 4c.

@@ -33,10 +33,28 @@ android {
         buildConfigField("String", "API_BASE_URL", "\"${release.apiBaseUrl}\"")
     }
 
+    // Release signing from the user's OWN ~/.gradle/gradle.properties, never
+    // the repo (android/BUILDING.md). When it is missing, no release signing
+    // config exists at all - nothing falls back to the debug key - and
+    // checkReleaseConfig stops the build and names what is missing.
+    // Copied from eparking 359c0c1 android/pos/app/build.gradle.kts (the
+    // signingConfigs block), with this app's property names.
+    signingConfigs {
+        if (release.hasSigning()) {
+            create("release") {
+                val p = release.signingProperties()
+                storeFile = file(p.getValue(ng.gsds.qrpark.release.SigningKeys.STORE_FILE)!!)
+                storePassword = p.getValue(ng.gsds.qrpark.release.SigningKeys.STORE_PASSWORD)
+                keyAlias = p.getValue(ng.gsds.qrpark.release.SigningKeys.KEY_ALIAS)
+                keyPassword = p.getValue(ng.gsds.qrpark.release.SigningKeys.KEY_PASSWORD)
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // Release signing arrives in Sprint 4c. Until then no release
-            // signing config exists, so nothing falls back to the debug key.
+            signingConfig = signingConfigs.findByName("release")
+            // No shrinking: what was tested is what ships.
             isMinifyEnabled = false
         }
     }

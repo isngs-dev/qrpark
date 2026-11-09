@@ -142,7 +142,7 @@ api.md match the code.
 
 ---
 
-## Sprint 4 — Android app (three modes, in three parts)
+## Sprint 4 — Android app (three modes, in three parts) — 4a DONE (bf82334), 4b DONE (02f8ed4; fix round 537422e), 4c staged
 
 One app; the mode comes from the account's job. Each part has its own review
 and commit. Tested on the Android emulator (AVD Medium_Phone); the debug build
@@ -166,6 +166,13 @@ only).
   "Not confirmed yet" shown plainly; 409 resumes the pending payment).
 
 **4c — Exit mode, check, release build**
+
+Done in 4c: Exit mode (ExitActivity, ExitRules.kt); Check in every mode with
+the scanned text masked in every scan field; the signed release build
+(`releaseApk`, signing from the user's own `~/.gradle/gradle.properties`,
+proven with a throwaway key) and the signing steps in `android/BUILDING.md`;
+a CI job for the Android JVM tests.
+
 - Exit: focused field, wedge and camera, Validate (one request at a time),
   the result screens of `01-flow.md` §3 including PAYMENT_REQUIRED and
   "Already used by you", grey "Cannot verify" on no connection or 5xx, Next.

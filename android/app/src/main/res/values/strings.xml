@@ -96,6 +96,11 @@
     <string name="checkout_page_retry">Try again</string>
     <string name="checkout_not_paystack">This is not Paystack\'s checkout, so it was not opened.</string>
 
+    <!-- Exit -->
+    <string name="exit_mode">Exit</string>
+    <string name="validate">Validate</string>
+    <string name="next_vehicle">Next</string>
+
     <!-- Camera -->
     <string name="close">Close</string>
     <string name="point_at_ticket">Point the camera at the ticket\'s QR.</string>

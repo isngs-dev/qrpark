@@ -6,15 +6,15 @@ package ng.gsds.qrpark
  * toggle, and there is no switching. The backend enforces the job on every
  * request; this only decides what is shown.
  */
-enum class Mode(val opensEntry: Boolean, val opensBooth: Boolean = false) {
+enum class Mode(val opensEntry: Boolean, val opensBooth: Boolean = false, val opensExit: Boolean = false) {
     /** An entry operator at an entry gate. */
     ENTRY(true),
 
     /** A payment operator at a booth (Sprint 4b). */
     BOOTH(false, opensBooth = true),
 
-    /** An exit operator: the exit screen arrives in 4c. */
-    EXIT_LATER(false),
+    /** An exit operator at an exit gate (Sprint 4c). */
+    EXIT(false, opensExit = true),
 
     /** An admin: the Admin Portal, not this app. */
     ADMIN(false),
@@ -27,14 +27,13 @@ enum class Mode(val opensEntry: Boolean, val opensBooth: Boolean = false) {
 fun modeFor(role: String?, locationKind: String?): Mode = when (role) {
     "ENTRY_OPERATOR" -> if (locationKind == "ENTRY") Mode.ENTRY else Mode.NONE
     "PAYMENT_OPERATOR" -> if (locationKind == "BOOTH") Mode.BOOTH else Mode.NONE
-    "EXIT_OPERATOR" -> Mode.EXIT_LATER
+    "EXIT_OPERATOR" -> if (locationKind == "EXIT") Mode.EXIT else Mode.NONE
     "ADMIN" -> Mode.ADMIN
     else -> Mode.NONE
 }
 
 /** What the holding screen says for a mode that has no screen in this app yet. */
 fun holdingText(mode: Mode): String = when (mode) {
-    Mode.EXIT_LATER -> "Exit mode: coming in 4c"
     Mode.ADMIN -> "Admin accounts use the Admin Portal"
-    Mode.NONE, Mode.ENTRY, Mode.BOOTH -> "This account has no job on this app. Ask the admin."
+    Mode.NONE, Mode.ENTRY, Mode.BOOTH, Mode.EXIT -> "This account has no job on this app. Ask the admin."
 }

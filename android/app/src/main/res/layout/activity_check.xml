@@ -20,13 +20,15 @@
         android:layout_marginTop="12dp"
         android:hint="@string/scan_or_type">
 
-        <!-- A keyboard-wedge scanner types here. A scan only fills the field; Enter never submits. -->
+        <!-- A keyboard-wedge scanner types here. A scan only fills the field; Enter never submits.
+             Masked (Sprint 4c): the scanned text is a ticket token and is never shown. -->
         <com.google.android.material.textfield.TextInputEditText
             android:id="@+id/scanField"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:imeOptions="actionNone|flagNoExtractUi"
-            android:inputType="textNoSuggestions|textVisiblePassword"
+            android:importantForAutofill="no"
+            android:inputType="textPassword|textNoSuggestions"
             android:maxLines="1" />
     </com.google.android.material.textfield.TextInputLayout>
 

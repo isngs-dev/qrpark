@@ -12,7 +12,7 @@ import java.io.File
  *   val release = the<QrparkReleaseExtension>().apply { baseVersion = "0.4.0" }
  *
  * Every rule lives in ReleaseRules.kt, where it is tested. This file only
- * reads properties and git, and registers two tasks:
+ * reads properties and git, and registers three tasks:
  *
  *   checkReleaseConfig  runs before every release build; fails with the full
  *                       list of what is wrong (address, git, signing)
@@ -20,10 +20,12 @@ import java.io.File
  *                       build/apk/qrpark-<version>-debug.apk with a .sha256,
  *                       deleting the previous debug APK and its .sha256 in
  *                       the same step
+ *   releaseApk          the same for the signed release (Sprint 4c): it meets
+ *                       checkReleaseConfig first, so it cannot be built with
+ *                       an http address or without signing
  *
  * Copied from eparking 359c0c1 android/build-logic/.../EparkingReleasePlugin.kt
- * and adapted: names, no flavours, and debugApk in place of vendorApk (the
- * signed release task arrives with the release build in Sprint 4c).
+ * and adapted: names, no flavours, debugApk and releaseApk in place of vendorApk.
  */
 class QrparkReleasePlugin : Plugin<Project> {
     override fun apply(project: Project) {
@@ -45,23 +47,34 @@ class QrparkReleasePlugin : Plugin<Project> {
         // Release tasks only: a debug build never meets this check.
         project.tasks.matching { isReleasePreBuild(it.name) }.configureEach { it.dependsOn(check) }
 
-        project.tasks.register("debugApk") { task ->
+        registerApkTask(project, ext, "debugApk", "debug")
+        registerApkTask(project, ext, "releaseApk", "release")
+    }
+
+    /**
+     * [taskName]: assemble<Kind>, then the APK copied to
+     * build/apk/qrpark-<version>-<kind>.apk with a .sha256, deleting the
+     * previous APK of the same kind and its .sha256 in the same step. The
+     * release one runs checkReleaseConfig first (through preReleaseBuild).
+     */
+    private fun registerApkTask(project: Project, ext: QrparkReleaseExtension, taskName: String, kind: String) {
+        project.tasks.register(taskName) { task ->
             task.group = "qrpark"
-            task.description = "Builds the debug APK, named by version, build number and commit, with a SHA-256 file."
-            task.dependsOn("assembleDebug")
+            task.description = "Builds the $kind APK, named by version, build number and commit, with a SHA-256 file."
+            task.dependsOn(assembleTask(kind))
             task.doLast {
-                val built = project.layout.buildDirectory.file("outputs/apk/debug/app-debug.apk").get().asFile
-                if (!built.isFile) throw GradleException("No debug APK at $built")
-                val name = apkFileName(ext.versionName, "debug")
+                val built = project.layout.buildDirectory.file(builtApkPath(kind)).get().asFile
+                if (!built.isFile) throw GradleException("No $kind APK at $built")
+                val name = apkFileName(ext.versionName, kind)
                 val outDir = project.layout.buildDirectory.dir("apk").get().asFile.apply { mkdirs() }
-                for (old in previousApks(outDir.list()?.toList().orEmpty(), "debug", keep = name)) {
+                for (old in previousApks(outDir.list()?.toList().orEmpty(), kind, keep = name)) {
                     File(outDir, old).delete()
                     println("Deleted:    ${File(outDir, old)}")
                 }
                 val apk = File(outDir, name)
                 built.copyTo(apk, overwrite = true)
                 File(outDir, "$name.sha256").writeText(sha256Line(apk.readBytes(), name))
-                println("Debug APK:  $apk")
+                println("${kind.replaceFirstChar { it.uppercase() }} APK: $apk")
                 println("Checksum:   ${apk.path}.sha256")
             }
         }

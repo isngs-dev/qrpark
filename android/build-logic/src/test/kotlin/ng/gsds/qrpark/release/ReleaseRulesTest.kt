@@ -130,6 +130,28 @@ class ReleaseRulesTest {
     }
 
     @Test
+    fun `the release APK is named like the debug one, and a new one deletes only the previous release APK`() {
+        assertEquals("qrpark-0.4.0-b9-abc1234-release.apk", apkFileName(versionNameFor("0.4.0", 9, "abc1234", false), "release"))
+        val keep = "qrpark-0.4.0-b9-abc1234-release.apk"
+        val folder = listOf(
+            "qrpark-0.4.0-b8-0000000-release.apk", "qrpark-0.4.0-b8-0000000-release.apk.sha256",
+            "qrpark-0.4.0-b8-0000000-debug.apk", "qrpark-0.4.0-b8-0000000-debug.apk.sha256", keep, "$keep.sha256",
+        )
+        assertEquals(
+            listOf("qrpark-0.4.0-b8-0000000-release.apk", "qrpark-0.4.0-b8-0000000-release.apk.sha256"),
+            previousApks(folder, "release", keep),
+        )
+    }
+
+    @Test
+    fun `each APK task builds its own kind`() {
+        assertEquals("assembleDebug", assembleTask("debug"))
+        assertEquals("assembleRelease", assembleTask("release"))
+        assertEquals("outputs/apk/release/app-release.apk", builtApkPath("release"))
+        assertEquals("outputs/apk/debug/app-debug.apk", builtApkPath("debug"))
+    }
+
+    @Test
     fun `the release build meets the release check, the debug build does not`() {
         assertTrue(isReleasePreBuild("preReleaseBuild"))
         assertTrue(!isReleasePreBuild("preDebugBuild"))

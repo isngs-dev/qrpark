@@ -89,6 +89,10 @@ object BackendClient {
     fun check(session: Session, scanned: String, then: (CheckReply) -> Unit) =
         authed(session, "POST", "/tickets/check", JSONObject().put("token", scanned)) { reply -> then(checkReplyOf(reply)) }
 
+    /** Exit: the one conditional update (docs/api.md). The same reply shape as check. */
+    fun validate(session: Session, scanned: String, then: (CheckReply) -> Unit) =
+        authed(session, "POST", "/tickets/validate", JSONObject().put("token", scanned)) { reply -> then(checkReplyOf(reply)) }
+
     // --------------------------------------------------------------- booth
 
     /** One payment request; [then] gets the reply and what it means for the attempt's key. */

@@ -92,6 +92,12 @@ fun previousApks(fileNames: List<String>, kind: String, keep: String): List<Stri
         apk.startsWith("qrpark-") && apk.endsWith("-$kind.apk") && apk != keep
     }
 
+/** The task that builds an APK of [kind] ("debug" or "release"). */
+fun assembleTask(kind: String): String = "assemble" + kind.replaceFirstChar { it.uppercase() }
+
+/** Where AGP writes that APK, under the build directory. */
+fun builtApkPath(kind: String): String = "outputs/apk/$kind/app-$kind.apk"
+
 /** preReleaseBuild: meets checkReleaseConfig. No debug task does. */
 fun isReleasePreBuild(taskName: String): Boolean =
     taskName.startsWith("pre") && taskName.endsWith("ReleaseBuild")

@@ -30,11 +30,12 @@ fun EditText.enterNeverSubmits() {
     setOnKeyListener { _, keyCode, _ -> keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER }
 }
 
-/** The account's one screen: Entry for an entry operator, otherwise the holding screen. */
+/** The account's one screen: its job's (entry, booth or exit), otherwise the holding screen. */
 fun Activity.openHome(session: Session) {
     val target = when {
         session.mode.opensEntry -> EntryActivity::class.java
         session.mode.opensBooth -> BoothActivity::class.java
+        session.mode.opensExit -> ExitActivity::class.java
         else -> HoldingActivity::class.java
     }
     startActivity(Intent(this, target).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))

@@ -98,3 +98,39 @@ jobs:
         working-directory: admin
       - run: npm run build
         working-directory: admin
+
+  # Sprint 4c: the Android JVM tests (the app's rule files and the release
+  # rules in build-logic). No emulator, no signing, no secrets. Every action is
+  # pinned to a release tag. The repo has no Gradle wrapper, so Gradle 8.9 (the
+  # version AGP 8.7.3 needs) comes from setup-gradle.
+  android:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          # versionCode is the commit count: a shallow clone would make it 1.
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v4.7.1
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # The runner image ships an Android SDK at $ANDROID_HOME; this makes sure
+      # the platform and build-tools the app needs are there, licences accepted.
+      - name: Android SDK platform 35 and build-tools 34.0.0
+        run: |
+          SDKM="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKM" --licenses > /dev/null
+          "$SDKM" --install "platforms;android-35" "build-tools;34.0.0" > /dev/null
+          "$SDKM" --list_installed | grep -E 'platforms;android-35|build-tools;34.0.0'
+
+      - uses: gradle/actions/setup-gradle@v4.3.1
+        with:
+          gradle-version: '8.9'
+
+      - name: App JVM tests
+        run: gradle -p android :app:testDebugUnitTest --console=plain
+
+      - name: Release-rule tests (build-logic)
+        run: gradle -p android/build-logic test --console=plain

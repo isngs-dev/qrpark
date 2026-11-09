@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/paper"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/exit_mode"
+            android:textAppearance="@style/TextAppearance.QrPark.Headline" />
+
+        <TextView
+            android:id="@+id/whoWhere"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textAppearance="@style/TextAppearance.QrPark.Body" />
+
+        <TextView
+            android:id="@+id/site"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            android:textAppearance="@style/TextAppearance.QrPark.Caption" />
+
+        <!-- The scan field: a scanner (or typing) only fills it; Enter never submits.
+             It never shows what was scanned: the text is masked (a ticket token). -->
+        <com.google.android.material.textfield.TextInputLayout
+            android:id="@+id/scanLayout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/scan_ticket">
+
+            <ng.gsds.qrpark.ScanTextField
+                android:id="@+id/scanField"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:imeOptions="actionNone|flagNoExtractUi"
+                android:importantForAutofill="no"
+                android:inputType="textPassword|textNoSuggestions"
+                android:maxLines="1" />
+        </com.google.android.material.textfield.TextInputLayout>
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/validateButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:minHeight="72dp"
+            android:text="@string/validate" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/cameraButton"
+                style="@style/Widget.QrPark.Button.Outlined"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="4dp"
+                android:layout_weight="1"
+                android:text="@string/scan_with_camera" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/checkButton"
+                style="@style/Widget.QrPark.Button.Outlined"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:layout_weight="1"
+                android:text="@string/check" />
+        </LinearLayout>
+
+        <!-- The answer, in large type and colour. -->
+        <TextView
+            android:id="@+id/banner"
+            style="@style/Widget.QrPark.Banner"
+            android:layout_marginTop="20dp"
+            android:minHeight="160dp"
+            android:textSize="30sp"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/detail"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:textAppearance="@style/TextAppearance.QrPark.Title" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/nextButton"
+            style="@style/Widget.QrPark.Button.Outlined"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="@string/next_vehicle"
+            android:visibility="gone" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/signOutButton"
+            style="@style/Widget.QrPark.Button.Text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end"
+            android:layout_marginTop="16dp"
+            android:text="@string/sign_out" />
+    </LinearLayout>
+</ScrollView>

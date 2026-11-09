@@ -23,9 +23,10 @@ the master reference for behaviour.
 - `backend/`: NestJS + Prisma + PostgreSQL + Redis. The API and all rules.
 - `admin/`: Next.js + Tailwind Admin Portal (ADMIN only).
 - `android/`: one Kotlin app, Android 10+. The mode comes from the account's
-  job. Sign-in, Entry mode (Sprint 4a) and Booth mode (Sprint 4b: cash, card
-  by Paystack's checkout, cancel) are built; exit accounts see a holding screen
-  until 4c.
+  job: Entry (Sprint 4a), Booth (4b: cash, card by Paystack's checkout inside
+  the app, cancel) and Exit (4c: Validate, one request at a time). Check works
+  in every mode. Release builds are signed with your own key: see
+  `android/BUILDING.md`. CI runs the Android JVM tests.
 
 ## Docs
 

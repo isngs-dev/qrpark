@@ -3,6 +3,7 @@ package ng.gsds.qrpark
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Modes.kt: the account's job, from the login response, decides the one screen. */
@@ -14,11 +15,26 @@ class ModesTest {
     }
 
     @Test
-    fun `a payment operator at a booth is in booth mode, an exit operator gets the holding screen`() {
+    fun `a payment operator at a booth is in booth mode, an exit operator at an exit gate in exit mode`() {
         assertEquals(Mode.BOOTH, modeFor("PAYMENT_OPERATOR", "BOOTH"))
-        assertEquals(Mode.EXIT_LATER, modeFor("EXIT_OPERATOR", "EXIT"))
-        // Their location does not turn them into entry operators.
-        assertEquals(Mode.EXIT_LATER, modeFor("EXIT_OPERATOR", "ENTRY"))
+        assertEquals(Mode.EXIT, modeFor("EXIT_OPERATOR", "EXIT"))
+    }
+
+    @Test
+    fun `an exit operator without an exit gate gets no exit screen`() {
+        assertEquals(Mode.NONE, modeFor("EXIT_OPERATOR", null))
+        assertEquals(Mode.NONE, modeFor("EXIT_OPERATOR", "ENTRY"))
+        assertEquals(Mode.NONE, modeFor("EXIT_OPERATOR", "BOOTH"))
+    }
+
+    @Test
+    fun `each job opens exactly one screen, and none opens another's`() {
+        assertEquals(listOf(Mode.EXIT), Mode.values().filter { it.opensExit })
+        for (m in Mode.values()) {
+            assertTrue(m.name, listOf(m.opensEntry, m.opensBooth, m.opensExit).count { it } <= 1)
+        }
+        assertFalse(Mode.BOOTH.opensExit)
+        assertFalse(Mode.EXIT.opensBooth)
     }
 
     @Test
@@ -62,7 +78,6 @@ class ModesTest {
 
     @Test
     fun `each holding screen says what it is`() {
-        assertEquals("Exit mode: coming in 4c", holdingText(Mode.EXIT_LATER))
         assertEquals("Admin accounts use the Admin Portal", holdingText(Mode.ADMIN))
         assertEquals("This account has no job on this app. Ask the admin.", holdingText(Mode.NONE))
     }

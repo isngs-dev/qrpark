@@ -103,12 +103,14 @@ class SourceRulesTest {
     }
 
     @Test
-    fun `the booth's scan field never shows what was scanned (a token)`() {
-        val layout = java.io.File("src/main/res/layout/activity_booth.xml").readText()
-        val field = Regex("""<ng\.gsds\.qrpark\.ScanTextField[\s\S]*?/>""").find(layout)?.value.orEmpty()
-        assertTrue(field, field.contains("android:id=\"@+id/scanField\""))
-        assertTrue(field, field.contains("textPassword"))
-        assertTrue(field, field.contains("android:importantForAutofill=\"no\""))
+    fun `the scan field never shows what was scanned (a token) - booth, exit and the entry Check`() {
+        for (name in listOf("activity_booth.xml", "activity_exit.xml", "activity_check.xml")) {
+            val layout = java.io.File("src/main/res/layout/$name").readText()
+            val field = Regex("""<[\w.]+(ScanTextField|TextInputEditText)\b[^>]*android:id="@\+id/scanField"[\s\S]*?/>""").find(layout)?.value.orEmpty()
+            assertTrue("$name: no scanField", field.isNotEmpty())
+            assertTrue("$name: $field", field.contains("textPassword"))
+            assertTrue("$name: $field", field.contains("android:importantForAutofill=\"no\""))
+        }
     }
 
     @Test
