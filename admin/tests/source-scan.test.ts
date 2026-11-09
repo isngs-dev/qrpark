@@ -49,6 +49,17 @@ test('the backend address is server-only: no NEXT_PUBLIC_ anywhere; QRPARK_API_U
   assert.deepEqual([...new Set(reads.map((r) => r.path))], ['lib/backend-url.ts'], where(reads));
 });
 
+test('T13: the client-address secret is read in one server-only file, and the address comes from the rightmost entry', () => {
+  const reads = lines.filter((l) => /QRPARK_CLIENT_ADDRESS_SECRET/.test(l.line) && /process\.env/.test(l.line));
+  assert.deepEqual([...new Set(reads.map((r) => r.path))], ['lib/client-address.ts'], where(reads));
+  for (const f of all.filter((x) => /^'use client';/.test(x.text))) {
+    assert.doesNotMatch(f.text, /client-address/, `${f.path}: a browser component imports the signing code`);
+  }
+  const signIn = all.find((f) => f.path === 'lib/auth-actions.ts');
+  assert.ok(signIn);
+  assert.match(signIn.text, /browserAddress\(\s*\(await headers\(\)\)\.get\('x-forwarded-for'\)\s*\)/, 'the sign-in action reads X-Forwarded-For through browserAddress');
+});
+
 test('no script touches cookies, and browser storage holds only the theme and sidebar choice', () => {
   const cookie = lines.filter((l) => /document\.cookie/.test(l.line));
   assert.equal(cookie.length, 0, where(cookie));
@@ -104,8 +115,12 @@ test('nothing changes state through a GET: GET forms (report filters) never call
 });
 
 test('no day from the portal\'s own clock, and every time is formatted in Africa/Lagos', () => {
+  // One exception (T13): the signed client-address header carries the signing time, which the
+  // backend checks against its own clock. It is never shown and never used as a day.
   const clock = lines.filter((l) => /Date\.now\(|new Date\(\s*\)/.test(l.line));
-  assert.equal(clock.length, 0, where(clock));
+  const allowed = clock.filter((l) => l.path === 'lib/client-address.ts' && /signClientAddress\(/.test(l.line));
+  assert.equal(allowed.length <= 1, true, where(allowed));
+  assert.equal(clock.length - allowed.length, 0, where(clock.filter((l) => !allowed.includes(l))));
   for (const f of all) {
     for (const m of f.text.matchAll(/Intl\.DateTimeFormat\(([\s\S]*?)\}\)/g)) {
       assert.match(m[1], /timeZone:\s*'Africa\/Lagos'/, `${f.path}: a date format without Africa/Lagos`);

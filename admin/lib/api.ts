@@ -52,8 +52,8 @@ async function ended(): Promise<never> {
 }
 
 /** Exchange a username and password for a token pair. Creates a session; never carries one. */
-export async function login(username: string, password: string): Promise<ApiResult<LoginAnswer>> {
-  return read<LoginAnswer>(await send('/auth/login', { method: 'POST', body: { username, password } }, undefined));
+export async function login(username: string, password: string, clientHeader: Record<string, string> = {}): Promise<ApiResult<LoginAnswer>> {
+  return read<LoginAnswer>(await send('/auth/login', { method: 'POST', body: { username, password }, headers: clientHeader }, undefined));
 }
 
 /** End every session of the signed-in admin at the backend (POST /auth/logout). */
@@ -68,8 +68,8 @@ export async function refreshTokens(refreshToken: string): Promise<LoginAnswer |
   return body?.accessToken && body.refreshToken ? body : null;
 }
 
-async function send(path: string, init: { method?: string; body?: unknown }, token: string | undefined): Promise<Response> {
-  const headers: Record<string, string> = { Accept: 'application/json' };
+async function send(path: string, init: { method?: string; body?: unknown; headers?: Record<string, string> }, token: string | undefined): Promise<Response> {
+  const headers: Record<string, string> = { Accept: 'application/json', ...(init.headers ?? {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
   if (init.body !== undefined) headers['Content-Type'] = 'application/json';
   try {

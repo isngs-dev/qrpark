@@ -1,7 +1,9 @@
 'use server';
 
+import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { login, logout } from './api';
+import { browserAddress, clientAddressHeader } from './client-address';
 import { clearSession, readSession, writeTokens, writeUser } from './session';
 import { mayUsePortal } from './users-types';
 
@@ -23,7 +25,10 @@ export async function signIn(_previous: SignInState, form: FormData): Promise<Si
   const password = String(form.get('password') ?? '');
   if (!username || !password) return { error: 'Enter a username and password.' };
 
-  const result = await login(username, password);
+  // T13: tell the backend which browser this is (rightmost X-Forwarded-For, signed), so a
+  // throttle block is per browser, not per portal. No usable address: no header.
+  const forwarded = browserAddress((await headers()).get('x-forwarded-for'));
+  const result = await login(username, password, clientAddressHeader(forwarded));
   if (!result.ok) {
     // The backend says the same for an unknown user, a wrong password and an
     // inactive account; so does this.

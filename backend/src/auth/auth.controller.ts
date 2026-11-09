@@ -2,6 +2,7 @@ import { Body, Controller, HttpCode, Post, Req, Res } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { IsString, MaxLength, MinLength } from 'class-validator';
 import { AuthService } from './auth.service';
+import { clientAddressOf } from './client-address';
 import { SignInThrottledException } from './login-throttle.service';
 import { CurrentActor, Public, Roles, type Actor } from './auth.guard';
 
@@ -29,8 +30,9 @@ export class AuthController {
   @HttpCode(200)
   async login(@Body() body: LoginDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
     try {
-      // req.ip: the client's address as Render's one trusted proxy hop saw it (app.setup.ts).
-      return await this.auth.login(body.username, body.password, req.ip ?? '');
+      // The browser's address when the portal signs in for it and its signed header verifies (T13);
+      // else req.ip, the caller as Render's one trusted proxy hop saw it (app.setup.ts).
+      return await this.auth.login(body.username, body.password, clientAddressOf(req));
     } catch (error) {
       if (error instanceof SignInThrottledException) res.setHeader('Retry-After', String(error.retryAfterSeconds));
       throw error;

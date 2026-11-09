@@ -91,7 +91,11 @@ DATABASE_URL=postgresql://qrpark:qrpark@localhost:5433/qrpark_test REDIS_URL=red
 Admin Portal: `cd admin && npm ci && npm run dev -- -p 3001` (the backend
 keeps port 3000). The portal calls the backend from its own server at
 `QRPARK_API_URL` (default `http://localhost:3000`): a server-only variable,
-never `NEXT_PUBLIC_`, because the browser never talks to the backend. Only
+never `NEXT_PUBLIC_`, because the browser never talks to the backend.
+`QRPARK_CLIENT_ADDRESS_SECRET` must hold the same value (32+ characters) in the
+portal and the backend (`admin/.env.example`, `backend/.env.example`): the
+portal signs the browser's address with it, so the sign-in throttle counts each
+browser and not the portal (T13). Without it the portal's own address is counted. Only
 ADMIN accounts sign in. `npm test` runs the portal's rule tests and source
 scan; `npm run build && npm start -- -p 3001` runs it as in production
 (Secure `__Host-` cookies).

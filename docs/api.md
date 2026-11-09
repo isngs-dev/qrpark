@@ -150,7 +150,20 @@ failure; an admin resetting the password (`POST /admin/users/:id/password`)
 clears that username's counts; so does `npm run unthrottle -- <username>` on
 the server. One audit row `LOGIN_THROTTLED` per block (no actor; the account
 when the username is one; never the typed username, the password or the
-address). The client address is `req.ip` behind exactly one trusted proxy hop.
+address). The client address is `req.ip` behind exactly one trusted proxy hop, except
+for a sign-in through the portal (T13): the portal sends
+
+```
+x-qrpark-client-address: <address>;<unix seconds>;<HMAC-SHA256 hex of "qrpark-login|address|seconds">
+```
+
+keyed with `QRPARK_CLIENT_ADDRESS_SECRET` (shared by the portal and the backend
+only, 32+ characters). The portal takes the address from the **rightmost**
+`X-Forwarded-For` entry (the one Render's proxy appends). The backend believes
+the header only on `POST /auth/login`, only when its secret is configured, the
+signature matches (constant-time) and the time is within 60 seconds; anything
+else (missing, forged, expired, another secret, tampered, repeated) is ignored
+and `req.ip` is used. The address is never logged or audited.
 Counts live in Redis (keyed hashes, every key with a TTL); if Redis cannot be
 reached the same rules run from the backend's memory (capped) and
 `LOGIN_THROTTLE_DEGRADED` is logged.
