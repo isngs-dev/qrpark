@@ -28,6 +28,11 @@ export class RedisService implements OnModuleDestroy {
     return this.client;
   }
 
+  /** The shared client (the sign-in throttle's counts, Hardening H1). */
+  connection(): Redis {
+    return this.redis();
+  }
+
   async isReachable(): Promise<boolean> {
     try {
       return (await this.redis().ping()) === 'PONG';

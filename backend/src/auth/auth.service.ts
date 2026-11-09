@@ -3,9 +3,12 @@ import { JwtService } from '@nestjs/jwt';
 import type { UserRole } from '@prisma/client';
 import { randomBytes } from 'node:crypto';
 import * as argon2 from 'argon2';
+import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma.service';
 import { SiteService } from '../site.service';
 import { USERNAME_PATTERN } from '../users/user-rules';
+import { LIMITS, type Scope } from './login-throttle';
+import { LoginThrottleService, SignInThrottledException } from './login-throttle.service';
 
 /**
  * Copied from eparking backend/src/auth/auth.service.ts and adapted:
@@ -36,6 +39,8 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly site: SiteService,
     private readonly jwt: JwtService,
+    private readonly throttle: LoginThrottleService,
+    private readonly audit: AuditService,
   ) {}
 
   /** Argon2id. Never reversible, never logged. */
@@ -43,9 +48,18 @@ export class AuthService {
     return argon2.hash(password, { type: argon2.argon2id });
   }
 
-  async login(rawUsername: string, password: string) {
+  /**
+   * Sign in, throttled (Hardening H1, M1): an attempt is refused with 429
+   * while its username+address pair, its username or its address has too many
+   * recent failures, before the password is checked and whatever it is.
+   */
+  async login(rawUsername: string, password: string, address: string) {
     const siteId = await this.site.getId();
     const username = typeof rawUsername === 'string' ? rawUsername.trim().toLowerCase() : '';
+
+    const keys = this.throttle.keys(siteId, username, address);
+    const reservation = await this.throttle.reserve(keys);
+    if (!reservation.ok) throw new SignInThrottledException(reservation.retryAfterSeconds);
 
     const user = USERNAME_PATTERN.test(username)
       ? await this.prisma.appUser.findFirst({ where: { siteId, username, deletedAt: null } })
@@ -57,11 +71,30 @@ export class AuthService {
     const ok = await argon2.verify(hash, password).catch(() => false);
 
     if (!user || !ok || !user.isActive) {
-      this.logger.warn(`Failed sign-in for username "${username}"`);
+      await this.throttle.settle(keys, false);
+      for (const scope of reservation.reachedMax) await this.throttled(scope, keys[scope], user?.id ?? null);
+      // Never the typed username: people type passwords into it by mistake.
+      this.logger.warn('Failed sign-in');
       throw new UnauthorizedException(INVALID);
     }
 
+    await this.throttle.settle(keys, true);
     return this.session(user.id);
+  }
+
+  /**
+   * One audit row when a block starts: nobody is signed in, so no actor; the
+   * account when the username is one; never the typed username, the password
+   * or the address.
+   */
+  private async throttled(scope: Scope, key: string, userId: string | null) {
+    await this.audit.record({
+      actorId: null,
+      action: 'LOGIN_THROTTLED',
+      targetType: userId ? 'user' : 'login',
+      targetId: userId ?? '-',
+      detail: { scope, failures: LIMITS[scope], windowMinutes: LIMITS.windowSeconds / 60, blockedSeconds: await this.throttle.remainingSeconds(key) },
+    });
   }
 
   async refresh(refreshToken: string) {

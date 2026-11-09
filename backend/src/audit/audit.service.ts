@@ -24,7 +24,8 @@ export class AuditService {
   ) {}
 
   async record(params: {
-    actorId: string;
+    /** Null only for LOGIN_THROTTLED (nobody is signed in); the database refuses it for any other action. */
+    actorId: string | null;
     action: AuditAction;
     targetType: string;
     targetId: string;
@@ -49,7 +50,7 @@ export class AuditService {
     });
 
     // The action and the ids only; the detail is not logged.
-    this.logger.log(`${params.action} on ${params.targetType}:${params.targetId} by ${params.actorId}`);
+    this.logger.log(`${params.action} on ${params.targetType}:${params.targetId} by ${params.actorId ?? '(nobody signed in)'}`);
     return row;
   }
 }

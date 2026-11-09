@@ -61,7 +61,9 @@ export async function seedTestData(options: {
   const siteStub = { getId: async () => site.id, code } as never;
   const audit = new AuditService(prisma as never, siteStub);
   const config = new ConfigService(prisma as never, siteStub, audit);
-  const users = new UsersService(prisma as never, siteStub, audit);
+  // The seed never resets a password, so the sign-in throttle is never asked to clear anything.
+  const noThrottle = { clearUser: async () => undefined } as never;
+  const users = new UsersService(prisma as never, siteStub, audit, noThrottle);
 
   const outcome: SeedOutcome = { created: [], kept: [] };
   const made = (what: string) => {

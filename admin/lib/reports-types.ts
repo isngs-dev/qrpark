@@ -256,4 +256,5 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   TICKET_REPRINTED: 'Ticket reprinted',
   PAYMENT_CASH_CONFIRMED: 'Cash confirmed',
   PAYMENT_CANCELLED: 'Card payment cancelled',
+  LOGIN_THROTTLED: 'Sign-in throttled (too many failed attempts)',
 };

@@ -3,10 +3,8 @@ import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD, APP_PIPE } from '@nestjs/core';
 import { CoreModule } from './core.module';
 import { HealthController } from './health.controller';
-import { RedisService } from './redis.service';
 import { AuthModule } from './auth/auth.module';
 import { AuthGuard } from './auth/auth.guard';
-import { AuditService } from './audit/audit.service';
 import { ConfigController } from './config/config.controller';
 import { ConfigService as SiteConfigService } from './config/config.service';
 import { UsersController } from './users/users.controller';
@@ -42,8 +40,6 @@ import { ReportsService } from './reports/reports.service';
   ],
   providers: [
     ReportsService,
-    RedisService,
-    AuditService,
     SiteConfigService,
     UsersService,
     LockService,

@@ -4,7 +4,7 @@
 in the same commit as any endpoint change. If it and the code disagree, say
 which is wrong.
 
-Created: Sprint 1. Last change: Sprint 5a-fix (the admin reports show our payment reference, T10). Before that, Sprint 5a (the admin reports and the audit view, read-only). Before that, Sprint 4b (`POST /payments/:id/cancel`), and Sprint R (the booth flow: tickets at entry, cash and card at the booth, exit requires PAID). The access column is enforced by the global guard and
+Created: Sprint 1. Last change: Hardening H1 (the sign-in throttle: 429 on `POST /auth/login`, `LOGIN_THROTTLED`). Before that, Sprint 5a-fix (the admin reports show our payment reference, T10). Before that, Sprint 5a (the admin reports and the audit view, read-only). Before that, Sprint 4b (`POST /payments/:id/cancel`), and Sprint R (the booth flow: tickets at entry, cash and card at the booth, exit requires PAID). The access column is enforced by the global guard and
 pinned by `backend/src/auth/routes.lifecycle.test.ts`, which fails if a route
 is added without being listed there.
 
@@ -128,7 +128,32 @@ The username is matched case-insensitively (usernames are stored lower-case).
 `gate` is `null` for an ADMIN. The app takes its mode from `user.role` and shows `gate`.
 
 401 `Invalid username or password` for a wrong password, an unknown username
-and an inactive account alike.
+and an inactive account alike. An unknown username is checked against a dummy
+Argon2 hash, so it takes as long as a wrong password (tested).
+
+**Throttle (Hardening H1).** Failed sign-ins are counted in a 15-minute window
+from the first failure, per site:
+
+| Count | Limit |
+|---|---|
+| username + client address | 5 |
+| username, any address | 20 |
+| client address, any username | 30 |
+
+While any count of an attempt is at its limit the answer is **429**
+`Too many sign-in attempts. Try again in N minutes.` with a `Retry-After`
+header (seconds), checked **before** the password and **whatever** the
+password: a right password is refused too. The answer is the same for a real
+and an unknown username. A successful sign-in clears its username + address
+count. Nothing is permanent: every count expires 15 minutes after its first
+failure; an admin resetting the password (`POST /admin/users/:id/password`)
+clears that username's counts; so does `npm run unthrottle -- <username>` on
+the server. One audit row `LOGIN_THROTTLED` per block (no actor; the account
+when the username is one; never the typed username, the password or the
+address). The client address is `req.ip` behind exactly one trusted proxy hop.
+Counts live in Redis (keyed hashes, every key with a TTL); if Redis cannot be
+reached the same rules run from the backend's memory (capped) and
+`LOGIN_THROTTLE_DEGRADED` is logged.
 
 ### `POST /auth/refresh` (public) → 200
 
@@ -834,6 +859,7 @@ Query: `from`, `to`, `page`, `pageSize`, `action` (an audit action, else 400),
 | `TICKET_REPRINTED` | ticketNumber, issuedBy (username only) |
 | `PAYMENT_CASH_CONFIRMED` | ticketNumber, amountKobo (**not** the payment reference) |
 | `PAYMENT_CANCELLED` | ticketNumber, forced |
+| `LOGIN_THROTTLED` | scope (`pair`, `user` or `ip`), failures, windowMinutes, blockedSeconds. `actor` is null |
 
 CSV columns: `Time (Lagos), Action, By, Details` (the allowed fields as
 `field: value; field: from -> to`).

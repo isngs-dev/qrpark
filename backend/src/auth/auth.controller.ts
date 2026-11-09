@@ -1,6 +1,8 @@
-import { Body, Controller, HttpCode, Post } from '@nestjs/common';
+import { Body, Controller, HttpCode, Post, Req, Res } from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { IsString, MaxLength, MinLength } from 'class-validator';
 import { AuthService } from './auth.service';
+import { SignInThrottledException } from './login-throttle.service';
 import { CurrentActor, Public, Roles, type Actor } from './auth.guard';
 
 /** Copied from eparking backend/src/auth/auth.controller.ts; username, and logout added. */
@@ -25,8 +27,14 @@ export class AuthController {
   @Public()
   @Post('login')
   @HttpCode(200)
-  login(@Body() body: LoginDto) {
-    return this.auth.login(body.username, body.password);
+  async login(@Body() body: LoginDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    try {
+      // req.ip: the client's address as Render's one trusted proxy hop saw it (app.setup.ts).
+      return await this.auth.login(body.username, body.password, req.ip ?? '');
+    } catch (error) {
+      if (error instanceof SignInThrottledException) res.setHeader('Retry-After', String(error.retryAfterSeconds));
+      throw error;
+    }
   }
 
   @Public()

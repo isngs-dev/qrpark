@@ -54,6 +54,9 @@ must end in `-test`), `SITE_NAME`, and for the first run `ADMIN_USERNAME`,
 
 - `npm run seed:site` creates the site, its settings and the first admin
   (from `ADMIN_USERNAME` / `ADMIN_PASSWORD`). It never changes what exists.
+- `npm run unthrottle -- <username>` clears a username's sign-in throttle
+  counts (Hardening H1). It needs a shell on the server; Render's free tier has
+  none, so there wait out the 15 minutes or reset the password in the portal.
 - `npm run seed:test-data` (test sites only) adds TEST categories and prices,
   the locations `ENTRY_1`, `BOOTH_1`, `BOOTH_2` and `EXIT_1`, and one account
   per job:

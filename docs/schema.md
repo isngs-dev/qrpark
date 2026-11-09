@@ -42,7 +42,7 @@ cash or card, exit requires PAID.
 | `ticket_validation_status` | `NOT_VALIDATED`, `VALIDATED`. EXPIRED is derived: not validated and `now() >= valid_until` |
 | `scan_kind` | `CHECK` (read-only), `EXIT` (single-use validation) |
 | `scan_result` | `VALID` (EXIT only), `ACTIVE` (CHECK only: paid, not validated, not expired), `PAYMENT_REQUIRED`, `ALREADY_USED`, `EXPIRED`, `INVALID_QR`, `NOT_FOUND` |
-| `audit_action` | `CATEGORY_CREATED`, `CATEGORY_UPDATED`, `CATEGORY_PRICE_CHANGED`, `SETTINGS_CHANGED`, `GATE_CREATED`, `GATE_UPDATED`, `USER_CREATED`, `USER_UPDATED`, `USER_PASSWORD_RESET`, `USER_DELETED`, `TICKET_REPRINTED`, `PAYMENT_CASH_CONFIRMED`, `PAYMENT_CANCELLED` |
+| `audit_action` | `CATEGORY_CREATED`, `CATEGORY_UPDATED`, `CATEGORY_PRICE_CHANGED`, `SETTINGS_CHANGED`, `GATE_CREATED`, `GATE_UPDATED`, `USER_CREATED`, `USER_UPDATED`, `USER_PASSWORD_RESET`, `USER_DELETED`, `TICKET_REPRINTED`, `PAYMENT_CASH_CONFIRMED`, `PAYMENT_CANCELLED`, `LOGIN_THROTTLED` |
 
 ## Functions
 
@@ -262,9 +262,9 @@ issue L2).
 |---|---|---|---|
 | id | uuid | no | PK |
 | site_id | uuid | no | FK → site |
-| actor_id | uuid | no | FK → app_user. Never null |
+| actor_id | uuid | yes | FK → app_user. Null **only** for `LOGIN_THROTTLED` (nobody is signed in when a sign-in block starts): CHECK `audit_log_actor_required_check` (`actor_id IS NOT NULL OR action::text = 'LOGIN_THROTTLED'`), 0005 |
 | action | audit_action | no | |
-| target_type | text | no | `site_setting`, `vehicle_category`, `gate`, `app_user`, `ticket`, `payment` |
+| target_type | text | no | `site_setting`, `vehicle_category`, `gate`, `app_user`, `ticket`, `payment`; for `LOGIN_THROTTLED`: `user` (the account, when the username is one) or `login` (target_id `-`) |
 | target_id | text | no | |
 | detail | jsonb | yes | Before and after values. Never a password, a hash or a token |
 | occurred_at | timestamptz | no | default `now()` |
@@ -286,3 +286,4 @@ Indexes: `(site_id, occurred_at)`, `(site_id, target_type, target_id)`.
 | `0002_payment_window` | 2 | `site_setting.payment_window_minutes` (default 5, CHECK 1–30) |
 | `0003_booth_flow` | R | The booth flow. Refuses to run over existing ticket or payment rows (no conversion; reset and re-seed). Ticket: payment and validation status, fee snapshot, category, device, idempotency key, `issued_at` / `valid_until` by the database; `customer_name`, `validity_hours`, `payment_id`, `payment_reference` dropped. Payment: `ticket_id`, method, device; amount equals the fee; one SUCCESS / one PENDING per ticket. `lagos_day_end()`, `ticket_insert_guard`, `ticket_guard`, `payment_guard`. Roles and kinds: PAYMENT_OPERATOR, BOOTH; DUPLICATE; PAYMENT_REQUIRED; USER_DELETED, PAYMENT_CASH_CONFIRMED. `app_user.deleted_at` with a username unique among live accounts. `site_setting.validity_hours` dropped |
 | `0004_payment_cancelled` | 4b | `ALTER TYPE audit_action ADD VALUE 'PAYMENT_CANCELLED'`, for `POST /payments/:id/cancel`. Needed because `audit_action` is a Postgres enum. Nothing else changes: a cancelled payment is `ABANDONED`, and the audit row holds the operator and whether it was forced. Adds a value only, so it runs over existing data unchanged |
+| `0005_login_throttled` | H1 | `ADD VALUE 'LOGIN_THROTTLED'`; `audit_log.actor_id` nullable, with `audit_log_actor_required_check` keeping it required for every other action (compares the action's text, so the new value is not used in the transaction that adds it). Runs over existing rows unchanged (dev copy: row counts identical before and after) |

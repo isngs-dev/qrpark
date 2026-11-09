@@ -117,6 +117,7 @@ enum AuditAction {
   USER_DELETED
   PAYMENT_CASH_CONFIRMED
   PAYMENT_CANCELLED // a PENDING card payment cancelled at the booth (POST /payments/:id/cancel)
+  LOGIN_THROTTLED // a sign-in block started (Hardening H1); the only action without an actor
 
   @@map("audit_action")
 }
@@ -417,8 +418,9 @@ model AuditLog {
   siteId String @map("site_id") @db.Uuid
   site   Site   @relation(fields: [siteId], references: [id], onDelete: Restrict)
 
-  actorId String  @map("actor_id") @db.Uuid
-  actor   AppUser @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  // Required for every action but LOGIN_THROTTLED (CHECK audit_log_actor_required_check, 0005).
+  actorId String?  @map("actor_id") @db.Uuid
+  actor   AppUser? @relation(fields: [actorId], references: [id], onDelete: Restrict)
 
   action     AuditAction
   targetType String      @map("target_type")

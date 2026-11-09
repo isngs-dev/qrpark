@@ -562,7 +562,7 @@ export class ReportsService {
     const rows = await this.prisma.$queryRawUnsafe<Array<Record<string, any>>>(
       `SELECT a.id::text AS id, a.occurred_at, a.action::text AS action, a.target_type, a.detail,
               u.id::text AS u_id, u.name AS u_name, u.deleted_at AS u_del
-         FROM audit_log a JOIN app_user u ON u.id = a.actor_id WHERE ${where}
+         FROM audit_log a LEFT JOIN app_user u ON u.id = a.actor_id WHERE ${where}
         ORDER BY a.occurred_at DESC, a.id LIMIT ${paging.pageSize} OFFSET ${(paging.page - 1) * paging.pageSize}`,
       ...params,
     );
@@ -578,7 +578,7 @@ export class ReportsService {
     const rows = await this.prisma.$queryRawUnsafe<Array<Record<string, any>>>(
       `SELECT a.id::text AS id, a.occurred_at, a.action::text AS action, a.target_type, a.detail,
               u.id::text AS u_id, u.name AS u_name, u.deleted_at AS u_del
-         FROM audit_log a JOIN app_user u ON u.id = a.actor_id WHERE ${where} ORDER BY a.occurred_at, a.id`,
+         FROM audit_log a LEFT JOIN app_user u ON u.id = a.actor_id WHERE ${where} ORDER BY a.occurred_at, a.id`,
       ...params,
     );
     const flat = (d: AuditField[]) =>

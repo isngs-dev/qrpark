@@ -3,6 +3,7 @@ import { Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from '../prisma.service';
 import { SiteService } from '../site.service';
 import { AuthService } from '../auth/auth.service';
+import { LoginThrottleService } from '../auth/login-throttle.service';
 import { AuditService, changes } from '../audit/audit.service';
 import {
   assertGateForRole,
@@ -45,6 +46,7 @@ export class UsersService {
     private readonly prisma: PrismaService,
     private readonly site: SiteService,
     private readonly audit: AuditService,
+    private readonly throttle: LoginThrottleService,
   ) {}
 
   async list() {
@@ -231,7 +233,7 @@ export class UsersService {
     assertPassword(password);
     const passwordHash = await AuthService.hash(password);
 
-    return this.prisma.$transaction(async (tx) => {
+    const done = await this.prisma.$transaction(async (tx) => {
       const user = await tx.appUser.findFirst({ where: { id, siteId, deletedAt: null }, select: { id: true, username: true } });
       if (!user) throw new NotFoundException('Unknown user at this site');
       await tx.appUser.update({
@@ -246,7 +248,10 @@ export class UsersService {
         targetId: user.id,
         detail: { username: user.username },
       });
-      return { id: user.id, passwordSet: true };
+      return { id: user.id, passwordSet: true, username: user.username };
     });
+    // A new password is an exit from a sign-in block (Hardening H1).
+    await this.throttle.clearUser(siteId, done.username);
+    return { id: done.id, passwordSet: done.passwordSet };
   }
 }

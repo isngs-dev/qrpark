@@ -158,6 +158,8 @@ const AUDIT_FIELDS: Record<string, string[]> = {
   TICKET_REPRINTED: ['ticketNumber', 'issuedBy'],
   PAYMENT_CASH_CONFIRMED: ['ticketNumber', 'amountKobo'],
   PAYMENT_CANCELLED: ['ticketNumber', 'forced'],
+  // Hardening H1: never the typed username, the password or the address (none is stored).
+  LOGIN_THROTTLED: ['scope', 'failures', 'windowMinutes', 'blockedSeconds'],
 };
 
 export const AUDIT_ACTIONS = Object.keys(AUDIT_FIELDS);
