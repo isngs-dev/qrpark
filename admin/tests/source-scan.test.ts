@@ -46,7 +46,7 @@ test('the backend address is server-only: no NEXT_PUBLIC_ anywhere; QRPARK_API_U
   const pub = lines.filter((l) => /NEXT_PUBLIC_/.test(l.line));
   assert.equal(pub.length, 0, where(pub));
   const reads = lines.filter((l) => /process\.env\.QRPARK_API_URL/.test(l.line));
-  assert.deepEqual([...new Set(reads.map((r) => r.path))], ['lib/backend-url.ts'], where(reads));
+  assert.deepEqual([...new Set(reads.map((r) => r.path))], ['lib/backend-url.mjs'], where(reads));
 });
 
 test('T13: the client-address secret is read in one server-only file, and the address comes from the rightmost entry', () => {
@@ -168,7 +168,9 @@ test('nothing secret has a field to land in: no token, checkout URL, access code
 });
 
 test('the security headers are set for every route', async () => {
-  const config = (await import('../next.config.mjs')).default as { headers: () => Promise<Array<{ source: string; headers: Array<{ key: string; value: string }> }>> };
+  // H3: next.config.mjs exports a function of Next's phase; the headers are the same in every phase.
+  const load = (await import('../next.config.mjs')).default as (phase: string) => { headers: () => Promise<Array<{ source: string; headers: Array<{ key: string; value: string }> }>> };
+  const config = load('phase-production-build');
   const rules = await config.headers();
   const every = rules.find((r) => r.source === '/:path*');
   assert.ok(every, 'a rule for every path');

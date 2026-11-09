@@ -1,5 +1,5 @@
 import type { NextRequest } from 'next/server';
-import { backendUrl } from '@/lib/backend-url';
+import { backendUrl } from '@/lib/backend-url.mjs';
 import { csvResponse } from '@/lib/csv-route';
 import { readSession } from '@/lib/session';
 import { mayUsePortal } from '@/lib/users-types';

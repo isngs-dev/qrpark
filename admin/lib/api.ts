@@ -1,12 +1,12 @@
 import { redirect } from 'next/navigation';
-import { backendUrl } from './backend-url';
+import { backendUrl } from './backend-url.mjs';
 import { clearSession, readSession, writeTokens } from './session';
 
 /**
  * The only route from this portal to the backend. Runs on the server.
  *
  * Adapted from eparking admin/lib/api.ts (359c0c1):
- *   - the address is the server-only QRPARK_API_URL (backend-url.ts);
+ *   - the address is the server-only QRPARK_API_URL (backend-url.mjs; https in production, H3);
  *   - sign-in is by username;
  *   - a session the backend no longer accepts (refresh refused) is cleared and
  *     the admin is sent to sign-in, instead of returning an error to the page;

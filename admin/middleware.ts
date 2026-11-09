@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { backendUrl } from './lib/backend-url';
+import { backendUrl } from './lib/backend-url.mjs';
 import { ACCESS_MAX_AGE_SECONDS, COOKIES, COOKIE_OPTIONS, REFRESH_MAX_AGE_SECONDS } from './lib/cookie-names';
 import { mayUsePortal } from './lib/users-types';
 

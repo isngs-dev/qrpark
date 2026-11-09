@@ -184,7 +184,7 @@ byte-identical.
 | `admin/app/(portal)/settings/categories/page.tsx`, `categories-manager.tsx` | `app/(portal)/settings/categories/page.tsx`, `categories-manager.tsx` | A flat price per vehicle type with "Set price" ("applies to new tickets"); readOnly mode dropped |
 | `admin/app/(portal)/settings/locations/page.tsx`, `locations-manager.tsx` | `app/(portal)/settings/gates/page.tsx`, `gates-manager.tsx` | Entry gates, booths, exit gates; devices dropped |
 
-Written new in Sprint 5b: `admin/lib/backend-url.ts`, `admin/app/(portal)/page.tsx`
+Written new in Sprint 5b: `admin/lib/backend-url.ts` (since Hardening H3 `admin/lib/backend-url.mjs`, so `next.config.mjs` can load the same rule), `admin/app/(portal)/page.tsx`
 (the overview), `admin/next.config.mjs` (security headers), and the tests
 `admin/tests/rules.test.ts` and `admin/tests/source-scan.test.ts`.
 

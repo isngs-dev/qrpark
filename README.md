@@ -90,8 +90,11 @@ DATABASE_URL=postgresql://qrpark:qrpark@localhost:5433/qrpark_test REDIS_URL=red
 
 Admin Portal: `cd admin && npm ci && npm run dev -- -p 3001` (the backend
 keeps port 3000). The portal calls the backend from its own server at
-`QRPARK_API_URL` (default `http://localhost:3000`): a server-only variable,
-never `NEXT_PUBLIC_`, because the browser never talks to the backend.
+`QRPARK_API_URL` (default `http://localhost:3000` in development only): a
+server-only variable, never `NEXT_PUBLIC_`, because the browser never talks to
+the backend. **In production it must be set to an `https://` address**: otherwise
+`next start` refuses to start (and every backend call refuses), naming the
+variable (Hardening H3). A production build does not need it.
 `QRPARK_CLIENT_ADDRESS_SECRET` must hold the same value (32+ characters) in the
 portal and the backend (`admin/.env.example`, `backend/.env.example`): the
 portal signs the browser's address with it, so the sign-in throttle counts each
