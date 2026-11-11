@@ -5,8 +5,8 @@ import { isIP } from 'node:net';
  * T13: the portal tells the backend which browser typed the password. Written
  * new. Server-only (Node crypto; read by the sign-in Server Action).
  *
- * The browser's address is the RIGHTMOST X-Forwarded-For entry: Render's proxy
- * appends the address it saw; anything to its left was sent by the client and
+ * The browser's address is the RIGHTMOST X-Forwarded-For entry: the proxy in
+ * front (Caddy) appends the address it saw; anything to its left was sent by the client and
  * can be forged. The header the backend checks:
  *
  *   x-qrpark-client-address: <address>;<unix seconds>;<HMAC-SHA256 hex of "qrpark-login|address|seconds">

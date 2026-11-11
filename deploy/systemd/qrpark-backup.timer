@@ -1,0 +1,12 @@
+# Runs qrpark-backup.service every day at 02:30 Lagos time (a quiet hour);
+# a run missed while the server was off happens at the next start.
+[Unit]
+Description=Daily QR Parking database backup
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 Africa/Lagos
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

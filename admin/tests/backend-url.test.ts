@@ -30,7 +30,7 @@ test('production: no user name or password inside the address, no query, no frag
 test('production: a valid https address is used, without trailing slashes', () => {
   assert.equal(checkBackendUrl('https://api.example.com', PRODUCTION), 'https://api.example.com');
   assert.equal(checkBackendUrl('https://api.example.com/', PRODUCTION), 'https://api.example.com');
-  assert.equal(checkBackendUrl(' https://qrpark-backend.onrender.com/// ', PRODUCTION), 'https://qrpark-backend.onrender.com');
+  assert.equal(checkBackendUrl(' https://qrpark-api.example.com/// ', PRODUCTION), 'https://qrpark-api.example.com');
   assert.equal(checkBackendUrl('https://api.example.com:8443/v1', PRODUCTION), 'https://api.example.com:8443/v1');
 });
 

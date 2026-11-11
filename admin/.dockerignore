@@ -1,0 +1,12 @@
+# Nothing secret and nothing built locally goes into the image (Sprint 6a).
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+node_modules
+.next
+*.tsbuildinfo
+*.log
+tests
+.git

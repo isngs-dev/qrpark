@@ -29,6 +29,14 @@ export { LATE_CHECK_MINUTES };
 const SWEEP_EVERY_MS = 2 * 60_000;
 const QUEUE = 'qrpark-payments';
 
+/**
+ * Every job this app enqueues (delayed verifies, sweep runs) is removed once it
+ * completes; at most 50 failed jobs are kept for a look. Redis runs with
+ * maxmemory and noeviction (Sprint 6a, L3), so nothing may pile up in it: a
+ * full Redis would refuse the payment locks (fail closed, 503).
+ */
+export const JOB_RETENTION = { removeOnComplete: true, removeOnFail: 50 } as const;
+
 @Injectable()
 export class ReconciliationService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ReconciliationService.name);
@@ -71,12 +79,13 @@ export class ReconciliationService implements OnModuleInit, OnModuleDestroy {
       { connection },
     );
     this.worker.on('failed', (job, error) => this.logger.error(`Job ${job?.name} failed: ${error.message}`));
-    await this.queue.upsertJobScheduler(
-      'payment-sweep',
-      { every: SWEEP_EVERY_MS },
-      { name: 'sweep', opts: { removeOnComplete: true, removeOnFail: 50 } },
-    );
+    await this.scheduleSweep();
     this.logger.log('Payment reconciliation worker started');
+  }
+
+  /** The repeating payment sweep (one scheduler; each run removed when done). */
+  async scheduleSweep(): Promise<void> {
+    await this.queue?.upsertJobScheduler('payment-sweep', { every: SWEEP_EVERY_MS }, { name: 'sweep', opts: { ...JOB_RETENTION } });
   }
 
   async onModuleDestroy() {
@@ -94,7 +103,7 @@ export class ReconciliationService implements OnModuleInit, OnModuleDestroy {
       await this.queue.add(
         'verify',
         { reference },
-        { delay: delayMs, removeOnComplete: true, removeOnFail: 50, jobId: `verify-${delayMs}-${reference}` },
+        { delay: delayMs, ...JOB_RETENTION, jobId: `verify-${delayMs}-${reference}` },
       );
     } catch (error) {
       this.logger.error(`Could not schedule a verify for ${reference}: ${(error as Error).message}. The sweep will pick it up.`);

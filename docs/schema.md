@@ -254,9 +254,9 @@ Indexes: `(site_id, occurred_at)`, `(ticket_id)`.
 ## audit_log
 
 Who did what, when, to which record. **Append-only:** the trigger
-`audit_log_append_only` raises on every UPDATE and DELETE (tested). TRUNCATE
-is not covered: the deployed database user must not hold TRUNCATE (known
-issue L2).
+`audit_log_append_only` raises on every UPDATE and DELETE, and the statement
+trigger `audit_log_no_truncate` (0006) on every TRUNCATE, also one reaching
+the table by CASCADE (all tested; known issue L2 closed).
 
 | Column | Type | Null | Constraint / note |
 |---|---|---|---|
@@ -287,3 +287,4 @@ Indexes: `(site_id, occurred_at)`, `(site_id, target_type, target_id)`.
 | `0003_booth_flow` | R | The booth flow. Refuses to run over existing ticket or payment rows (no conversion; reset and re-seed). Ticket: payment and validation status, fee snapshot, category, device, idempotency key, `issued_at` / `valid_until` by the database; `customer_name`, `validity_hours`, `payment_id`, `payment_reference` dropped. Payment: `ticket_id`, method, device; amount equals the fee; one SUCCESS / one PENDING per ticket. `lagos_day_end()`, `ticket_insert_guard`, `ticket_guard`, `payment_guard`. Roles and kinds: PAYMENT_OPERATOR, BOOTH; DUPLICATE; PAYMENT_REQUIRED; USER_DELETED, PAYMENT_CASH_CONFIRMED. `app_user.deleted_at` with a username unique among live accounts. `site_setting.validity_hours` dropped |
 | `0004_payment_cancelled` | 4b | `ALTER TYPE audit_action ADD VALUE 'PAYMENT_CANCELLED'`, for `POST /payments/:id/cancel`. Needed because `audit_action` is a Postgres enum. Nothing else changes: a cancelled payment is `ABANDONED`, and the audit row holds the operator and whether it was forced. Adds a value only, so it runs over existing data unchanged |
 | `0005_login_throttled` | H1 | `ADD VALUE 'LOGIN_THROTTLED'`; `audit_log.actor_id` nullable, with `audit_log_actor_required_check` keeping it required for every other action (compares the action's text, so the new value is not used in the transaction that adds it). Runs over existing rows unchanged (dev copy: row counts identical before and after) |
+| `0006_audit_log_no_truncate` | 6a | `audit_log_no_truncate`: BEFORE TRUNCATE, FOR EACH STATEMENT, the same function (`audit_log is append-only: TRUNCATE refused`). L2. Touches no row (dev copy: every table's count identical before and after) |

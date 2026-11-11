@@ -5,8 +5,8 @@ import { browserAddress, signClientAddress } from '../lib/client-address.ts';
 
 /**
  * T13: the portal tells the backend which browser typed the password. The
- * browser's address is the RIGHTMOST X-Forwarded-For entry: Render's proxy
- * appends what it saw; anything to its left came from the client and can be
+ * browser's address is the RIGHTMOST X-Forwarded-For entry: the proxy in front
+ * (Caddy) appends what it saw; anything to its left came from the client and can be
  * forged.
  */
 

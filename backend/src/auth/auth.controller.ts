@@ -31,7 +31,7 @@ export class AuthController {
   async login(@Body() body: LoginDto, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
     try {
       // The browser's address when the portal signs in for it and its signed header verifies (T13);
-      // else req.ip, the caller as Render's one trusted proxy hop saw it (app.setup.ts).
+      // else req.ip, the caller as the one trusted proxy hop (Caddy) saw it (app.setup.ts).
       return await this.auth.login(body.username, body.password, clientAddressOf(req));
     } catch (error) {
       if (error instanceof SignInThrottledException) res.setHeader('Retry-After', String(error.retryAfterSeconds));

@@ -10,7 +10,7 @@ export class HealthController {
     private readonly redis: RedisService,
   ) {}
 
-  // Public on purpose: Render's health check and an operator's "is the
+  // Public on purpose: the container healthcheck, the uptime check and an operator's "is the
   // server up?" must work without signing in. It says nothing about any site,
   // user or ticket.
   @Public()

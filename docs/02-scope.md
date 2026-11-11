@@ -38,7 +38,8 @@ festive-season launch. Anything not in the MVP list waits for Phase 2.
   incomplete sessions; finance / revenue (cash vs card); dashboard; CSV export.
 
 **Deployment**
-- Render test environment, seed scripts, test data (TEST VALUE prices).
+- Test environment on one DigitalOcean droplet (Docker Compose, Caddy), seed
+  scripts, test data (TEST VALUE prices).
 
 ## Phase 2 (after launch)
 

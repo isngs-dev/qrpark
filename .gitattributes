@@ -1,0 +1,6 @@
+# Files that run or are read on the Linux server keep LF line ends on every
+# checkout, also on Windows (Sprint 6a): a CRLF shell script does not run.
+*.sh             text eol=lf
+deploy/Caddyfile text eol=lf
+deploy/systemd/* text eol=lf
+compose.prod.yml text eol=lf

@@ -61,8 +61,7 @@ Lessons already learned there (do not repeat):
 
 | eparking | Reuse for |
 |---|---|
-| `render.yaml` | Blueprint (rename services; `rootDir`/`dockerContext` lesson) |
-| `docs/deploy-render-test.md` | Runbook |
+| `backend/Dockerfile` | The backend image (adapted in Sprint 6a: non-root user, `.dockerignore`) |
 | `.github/workflows/` | CI |
 
 ## Ticket branding (decided 2026-11-07)

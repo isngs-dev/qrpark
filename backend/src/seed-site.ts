@@ -1,13 +1,18 @@
 import { PrismaClient } from '@prisma/client';
 import { AuthService } from './auth/auth.service';
-import { assertPassword, normaliseUsername } from './users/user-rules';
+import { normaliseUsername } from './users/user-rules';
+import { assertSeedPassword } from './seed-passwords';
 
 /**
  * Creates the one site row this deployment serves, its settings row, and
  * optionally the first admin so someone can sign in.
  *
  *   SITE_CODE=... [SITE_NAME=...] node dist/seed-site.js
- *   ... ADMIN_USERNAME=... ADMIN_PASSWORD=... [ADMIN_NAME=...] node dist/seed-site.js
+ *   ... SEED_ADMIN_USERNAME=... SEED_ADMIN_PASSWORD=... [SEED_ADMIN_NAME=...] node dist/seed-site.js
+ *
+ * On the server it runs in the compose "seed" service (the api image, on the
+ * internal network: no outside database connection), which alone receives the
+ * SEED_* variables; they are deleted from .env afterwards (docs/07).
  *
  * Copied from eparking backend/src/seed-site.ts and adapted: a site_setting
  * row, a username, and the shared password rule.
@@ -19,7 +24,9 @@ import { assertPassword, normaliseUsername } from './users/user-rules';
  * A ticket is valid on its day of issue only (Africa/Lagos): there is no
  * validity setting (docs/05-known-issues.md T1, closed).
  *
- * Not audited: there is no actor yet. The password is never printed.
+ * Not audited: there is no actor yet. The password is never printed. A weak
+ * or missing SEED_ADMIN_PASSWORD (seed-passwords.ts) is refused before
+ * anything is read or written; an existing admin's password is never changed.
  */
 
 export async function seedSite(options: {
@@ -32,12 +39,12 @@ export async function seedSite(options: {
   if (!code) throw new Error('SITE_CODE must be set');
 
   // Validate everything before writing anything.
-  const username = env.ADMIN_USERNAME !== undefined ? normaliseUsername(env.ADMIN_USERNAME) : undefined;
-  const password = env.ADMIN_PASSWORD;
+  const username = env.SEED_ADMIN_USERNAME !== undefined ? normaliseUsername(env.SEED_ADMIN_USERNAME) : undefined;
+  const password = env.SEED_ADMIN_PASSWORD;
   if ((username === undefined) !== (password === undefined)) {
-    throw new Error('Set both ADMIN_USERNAME and ADMIN_PASSWORD, or neither');
+    throw new Error('Set both SEED_ADMIN_USERNAME and SEED_ADMIN_PASSWORD, or neither');
   }
-  if (password !== undefined) assertPassword(password);
+  if (username !== undefined) assertSeedPassword('SEED_ADMIN_PASSWORD', password, username);
 
   let site = await prisma.site.findUnique({ where: { code } });
   if (site) print(`  kept     site ${code} (already there, not changed)`);
@@ -65,16 +72,16 @@ export async function seedSite(options: {
         data: {
           siteId: site.id,
           username,
-          name: env.ADMIN_NAME?.trim() || 'Administrator',
+          name: env.SEED_ADMIN_NAME?.trim() || 'Administrator',
           role: 'ADMIN',
           passwordHash: await AuthService.hash(password),
         },
       });
       adminCreated = true;
-      print(`  created  admin ${username} (password from ADMIN_PASSWORD, not shown)`);
+      print(`  created  admin ${username} (password from SEED_ADMIN_PASSWORD, not shown)`);
     }
   } else {
-    print('  skipped  admin (no ADMIN_USERNAME / ADMIN_PASSWORD)');
+    print('  skipped  admin (no SEED_ADMIN_USERNAME / SEED_ADMIN_PASSWORD)');
   }
 
   return { siteId: site.id, adminCreated };

@@ -3,7 +3,8 @@ import { PrismaClient } from '@prisma/client';
 import { AuditService } from './audit/audit.service';
 import { ConfigService } from './config/config.service';
 import { UsersService } from './users/users.service';
-import { TEST_ACCOUNTS, TEST_CATEGORIES, TEST_GATES, generatePassword, naira, testSiteProblem } from './seed-test-data.rules';
+import { TEST_ACCOUNTS, TEST_CATEGORIES, TEST_GATES, naira, testSiteProblem } from './seed-test-data.rules';
+import { assertSeedPassword } from './seed-passwords';
 
 /**
  * Test data for a TEST site only:
@@ -20,8 +21,10 @@ import { TEST_ACCOUNTS, TEST_CATEGORIES, TEST_GATES, generatePassword, naira, te
  *  - Writes through the portal's own services, so the data obeys the same
  *    validation (integer kobo, gate direction, password length) and every
  *    change is audited under the site's first admin.
- *  - A new account's password is printed once, here, and stored nowhere but
- *    as its hash.
+ *  - A new account's password comes from its SEED_* variable (the server's
+ *    .env, deleted after seeding); a missing or weak one is refused before
+ *    anything is read or written. It is stored only as its hash and printed
+ *    nowhere. An existing account's password is never changed.
  *
  * ALL AMOUNTS ARE TEST VALUES.
  */
@@ -34,14 +37,17 @@ export interface SeedOutcome {
 export async function seedTestData(options: {
   prisma: PrismaClient;
   siteCode: string | undefined;
+  env: Record<string, string | undefined>;
   print: (line: string) => void;
 }): Promise<SeedOutcome> {
-  const { prisma, siteCode, print } = options;
+  const { prisma, siteCode, env, print } = options;
 
   // FIRST, before any read or write.
   const problem = testSiteProblem(siteCode);
   if (problem) throw new Error(problem);
   const code = siteCode!;
+  // Every password, before any read or write.
+  for (const account of TEST_ACCOUNTS) assertSeedPassword(account.passwordVar, env[account.passwordVar], account.username);
 
   const site = await prisma.site.findUnique({ where: { code } });
   if (!site) throw new Error(`No site "${code}". Run the site seed first: node dist/seed-site.js`);
@@ -54,7 +60,7 @@ export async function seedTestData(options: {
   if (!admin) {
     throw new Error(
       `No active admin on "${code}" to record these changes under. Create one first: ` +
-        'ADMIN_USERNAME=... ADMIN_PASSWORD=... node dist/seed-site.js',
+        'SEED_ADMIN_USERNAME=... SEED_ADMIN_PASSWORD=... node dist/seed-site.js',
     );
   }
 
@@ -105,31 +111,25 @@ export async function seedTestData(options: {
   }
 
   // ------------------------------------------------------ test accounts
-  const passwords: Array<{ username: string; password: string }> = [];
   for (const account of TEST_ACCOUNTS) {
     const existing = await prisma.appUser.findFirst({
       where: { siteId: site.id, username: account.username, deletedAt: null },
     });
     if (existing) {
-      kept(`account ${account.username} - password not shown again`);
+      kept(`account ${account.username}, its password included`);
       continue;
     }
-    const password = generatePassword();
     await users.create(
-      { username: account.username, name: account.name, role: account.role, gateId: gateIds.get(account.gateCode)!, password },
+      {
+        username: account.username,
+        name: account.name,
+        role: account.role,
+        gateId: gateIds.get(account.gateCode)!,
+        password: env[account.passwordVar]!,
+      },
       admin.id,
     );
-    made(`account ${account.username} (${account.role} at ${account.gateCode})`);
-    passwords.push({ username: account.username, password });
-  }
-
-  if (passwords.length > 0) {
-    print('');
-    print('NEW PASSWORDS - shown this once only. Send each privately to the tester it is for,');
-    print('then clear this screen.');
-    for (const { username, password } of passwords) print(`  ${username}  password: ${password}`);
-  } else {
-    print('No new accounts: existing passwords are not shown again. Reset one in the portal if it is lost.');
+    made(`account ${account.username} (${account.role} at ${account.gateCode}; password from ${account.passwordVar}, not shown)`);
   }
 
   print(`Done: ${outcome.created.length} created, ${outcome.kept.length} kept.`);
@@ -138,11 +138,11 @@ export async function seedTestData(options: {
 
 async function main() {
   // The services log each step at info level. Warnings and errors only here,
-  // so the one-time password block is not lost among them.
+  // so the seed's own lines are easy to read.
   Logger.overrideLogger(['warn', 'error']);
   const prisma = new PrismaClient();
   try {
-    await seedTestData({ prisma, siteCode: process.env.SITE_CODE, print: (line) => console.log(line) });
+    await seedTestData({ prisma, siteCode: process.env.SITE_CODE, env: process.env, print: (line) => console.log(line) });
   } catch (error) {
     console.error((error as Error).message);
     process.exitCode = 1;

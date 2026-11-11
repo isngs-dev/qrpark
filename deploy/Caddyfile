@@ -1,0 +1,33 @@
+# QR Parking: HTTPS in front of the api and the portal (Sprint 6a).
+# Host names and the e-mail come from the server's .env through compose.prod.yml;
+# nothing site-specific is written here.
+#
+# Certificates: automatic (Let's Encrypt), once DNS answers for both names
+# (docs/07). CADDY_TLS is empty on the server; the local rehearsal
+# (deploy/compose.local-proof.yml) sets it to "tls internal".
+#
+# X-Forwarded-For: no proxy is trusted (no trusted_proxies here), so Caddy
+# DROPS whatever X-Forwarded-For a client sends and sets the address it saw.
+# The api trusts exactly this one hop, and the portal signs the rightmost entry
+# (T13): a client cannot choose its own address. Proven in .evidence/sprint-6a.txt.
+#
+# No access log: request lines are not written anywhere.
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$API_HOST} {
+	{$CADDY_TLS}
+	reverse_proxy api:3000 {
+		# A CSV is streamed (Hardening H5): pass each part on at once.
+		flush_interval -1
+	}
+}
+
+{$ADMIN_HOST} {
+	{$CADDY_TLS}
+	reverse_proxy portal:3000 {
+		flush_interval -1
+	}
+}

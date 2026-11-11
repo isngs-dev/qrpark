@@ -245,6 +245,25 @@ test('audit_log refuses DELETE (audit_log is append-only)', async () => {
   assertRefusedBy(message, 'audit_log is append-only: DELETE refused');
 });
 
+// L2 (Sprint 6a, migration 0006): TRUNCATE skips row triggers, so it gets its own.
+// lock_timeout: TRUNCATE waits for every other session's lock on the table; a
+// wait that runs out is NOT the refusal this test looks for, so it fails here.
+test('audit_log refuses TRUNCATE (L2)', async () => {
+  const message = await attemptInRollback(prisma, async (tx) => {
+    await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '10s'`);
+    await tx.$executeRawUnsafe(`TRUNCATE audit_log`);
+  });
+  assertRefusedBy(message, 'audit_log is append-only: TRUNCATE refused');
+});
+
+test('audit_log refuses TRUNCATE reaching it by CASCADE from app_user (L2)', async () => {
+  const message = await attemptInRollback(prisma, async (tx) => {
+    await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '10s'`);
+    await tx.$executeRawUnsafe(`TRUNCATE app_user CASCADE`);
+  });
+  assertRefusedBy(message, 'audit_log is append-only: TRUNCATE refused');
+});
+
 test('audit_log accepts INSERT (control)', async () => {
   const message = await attemptInRollback(prisma, async (tx) => {
     const fx = await buildFixture(tx);

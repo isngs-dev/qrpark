@@ -1,0 +1,177 @@
+# QR Parking on one server (Sprint 6a): Caddy (HTTPS), api, portal, Postgres,
+# Redis, a one-shot migration, and a seed tool. Runbook: docs/07-deploy-digitalocean.md.
+#
+#   docker compose -f compose.prod.yml up -d           (reads ./.env: never in git)
+#
+# Every value comes from the server's .env (names: docs/08-secrets-and-go-live.md).
+# No address, host name or secret is written here.
+#
+# Networks - who can reach whom:
+#   data         internal (no way out): postgres, redis, api, migrate, seed
+#   api_edge     caddy <-> api; the api also reaches Paystack through it
+#   portal_edge  caddy <-> portal. The portal calls the api at
+#                https://${API_HOST} (Hardening H3: https only), which on this
+#                network is Caddy itself (alias below), with the real
+#                certificate. The portal can NOT reach the api directly.
+# Only Caddy publishes ports. The api trusts exactly one proxy hop
+# (app.setup.ts), and the only thing that can reach it is Caddy.
+
+name: qrpark
+
+# Every service's Docker log: at most 3 files of 10 MB each (json-file), so
+# logs can never fill the disk.
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-api-image: &api-image
+  image: qrpark-api:${QRPARK_TAG:-latest}
+  build: ./backend
+
+x-database-url: &database-url
+  DATABASE_URL: postgresql://qrpark:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/qrpark
+
+services:
+  caddy:
+    <<: *logging
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "443:443/udp"]
+    environment:
+      API_HOST: ${API_HOST:?set API_HOST in .env}
+      ADMIN_HOST: ${ADMIN_HOST:?set ADMIN_HOST in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+      CADDY_TLS: ${CADDY_TLS:-}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      api_edge: {}
+      portal_edge:
+        aliases: ["${API_HOST}"]
+    depends_on:
+      api: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:2019/config/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    <<: [*api-image, *logging]
+    command: ["npx", "--no-install", "prisma", "migrate", "deploy"]
+    restart: "no"
+    environment:
+      <<: *database-url
+    networks: [data]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    <<: [*api-image, *logging]
+    restart: unless-stopped
+    environment:
+      <<: *database-url
+      REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379
+      PORT: "3000"
+      SITE_CODE: ${SITE_CODE:?set SITE_CODE in .env}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      QRPARK_CLIENT_ADDRESS_SECRET: ${QRPARK_CLIENT_ADDRESS_SECRET:?set QRPARK_CLIENT_ADDRESS_SECRET in .env}
+      PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY:-}
+    networks: [data, api_edge]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(async r => process.exit((await r.json()).status === 'ok' ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  portal:
+    <<: *logging
+    image: qrpark-portal:${QRPARK_TAG:-latest}
+    build: ./admin
+    restart: unless-stopped
+    environment:
+      QRPARK_API_URL: https://${API_HOST}
+      QRPARK_CLIENT_ADDRESS_SECRET: ${QRPARK_CLIENT_ADDRESS_SECRET}
+    networks: [portal_edge]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Seeding, run by hand (docs/07): docker compose -f compose.prod.yml --profile seed run --rm seed node dist/seed-site.js
+  # Only this service receives the SEED_* passwords; the long-running api never does.
+  seed:
+    <<: [*api-image, *logging]
+    profiles: ["seed"]
+    restart: "no"
+    environment:
+      <<: *database-url
+      SITE_CODE: ${SITE_CODE}
+      SITE_NAME: ${SITE_NAME:-}
+      SEED_ADMIN_USERNAME: ${SEED_ADMIN_USERNAME:-}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      SEED_ADMIN_NAME: ${SEED_ADMIN_NAME:-}
+      SEED_ENTRY_PASSWORD: ${SEED_ENTRY_PASSWORD:-}
+      SEED_BOOTH_PASSWORD: ${SEED_BOOTH_PASSWORD:-}
+      SEED_EXIT_PASSWORD: ${SEED_EXIT_PASSWORD:-}
+    networks: [data]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  postgres:
+    <<: *logging
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: qrpark
+      POSTGRES_DB: qrpark
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qrpark -d qrpark"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # L3: BullMQ needs noeviction (an evicting policy can drop queued jobs). Every
+  # job is removed when done and at most 50 failed are kept (JOB_RETENTION).
+  redis:
+    <<: *logging
+    image: redis:7-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction --requirepass \"$$REDIS_PASSWORD\""]
+    volumes: ["redisdata:/data"]
+    networks: [data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+networks:
+  data:
+    internal: true
+  api_edge: {}
+  portal_edge: {}
+
+volumes:
+  pgdata:
+  redisdata:
+  caddy_data:
+  caddy_config:

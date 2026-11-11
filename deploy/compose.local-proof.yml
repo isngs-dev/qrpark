@@ -1,0 +1,53 @@
+# LOCAL REHEARSAL ONLY (Sprint 6a evidence), never on the server:
+#
+#   docker compose -p qrpark-proof -f compose.prod.yml -f deploy/compose.local-proof.yml --env-file <a local env file> up -d
+#
+# (-p qrpark-proof: a project name of its own, so the rehearsal can never
+# touch the development stack's containers or volumes.)
+#
+# Differences from the server, and nothing else:
+#  - Caddy issues its own local certificates (CADDY_TLS="tls internal" in the
+#    local env file) instead of Let's Encrypt, and listens on 127.0.0.1:8080/8443.
+#  - The portal TRUSTS Caddy's local root certificate through
+#    NODE_EXTRA_CA_CERTS. Caddy's data directory is root-only and the portal
+#    runs as uid 1000, so a one-shot service copies the PUBLIC root
+#    certificate (not its key) into a small read-only volume. Certificate
+#    checks stay fully on: nothing here disables TLS verification.
+#  - A "proof_clients" network with fixed addresses, so test clients reach
+#    Caddy from known source addresses (the T13 proof).
+
+services:
+  caddy:
+    ports: !override ["127.0.0.1:8080:80", "127.0.0.1:8443:443"]
+    networks:
+      proof_clients:
+        ipv4_address: 10.99.0.2
+        aliases: ["${API_HOST}", "${ADMIN_HOST}"]
+
+  caddy-root-export:
+    image: caddy:2.10.2-alpine
+    restart: "no"
+    command: ["sh", "-c", "cp /data/caddy/pki/authorities/local/root.crt /out/root.crt && chmod 644 /out/root.crt"]
+    volumes:
+      - caddy_data:/data:ro
+      - caddy_root_public:/out
+    network_mode: none
+    depends_on:
+      caddy: { condition: service_healthy }
+
+  portal:
+    environment:
+      NODE_EXTRA_CA_CERTS: /caddy-root/root.crt
+    volumes:
+      - caddy_root_public:/caddy-root:ro
+    depends_on:
+      caddy-root-export: { condition: service_completed_successfully }
+
+networks:
+  proof_clients:
+    ipam:
+      config:
+        - subnet: 10.99.0.0/24
+
+volumes:
+  caddy_root_public:

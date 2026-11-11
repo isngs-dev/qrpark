@@ -8,10 +8,10 @@ import { throttleKeys } from './auth/login-throttle';
  *
  *   npm run unthrottle -- <username>      (DATABASE_URL, REDIS_URL, JWT_SECRET, SITE_CODE)
  *
- * For an account kept blocked by failures from many addresses. It needs a
- * shell on the server; Render's free tier has none, so there the exits are
- * the 15-minute expiry and an admin resetting the password (which clears the
- * same counts). Prints a count only, never the username. The backend's
+ * For an account kept blocked by failures from many addresses. On the server
+ * it runs inside the api container (docs/07-deploy-digitalocean.md); the other
+ * exits are the 15-minute expiry and an admin resetting the password (which
+ * clears the same counts). Prints a count only, never the username. The backend's
  * in-memory fallback (used only while Redis is down) is not reached from here.
  */
 export async function unthrottle(username: string, env: NodeJS.ProcessEnv): Promise<number> {

@@ -14,8 +14,9 @@ const JSON_LIMIT = '100kb';
 export function configureApp(app: INestApplication): void {
   const express = app as NestExpressApplication;
 
-  // Exactly one proxy hop is trusted: Render's. req.ip is then the address
-  // Render saw, and req.protocol is what the client used. Trusting more hops
+  // Exactly one proxy hop is trusted: Caddy's (compose.prod.yml; nothing else
+  // can reach the api). req.ip is then the address Caddy saw, and req.protocol
+  // is what the client used. Trusting more hops
   // would let a client choose its own address with an X-Forwarded-For header.
   express.set('trust proxy', 1);
 

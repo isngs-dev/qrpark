@@ -47,16 +47,21 @@ npm run start:dev                    # http://localhost:3000/health
 
 `backend/.env` is ignored by git and is the only place local values live:
 `DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`, `SITE_CODE` (a test site's code
-must end in `-test`), `SITE_NAME`, and for the first run `ADMIN_USERNAME`,
-`ADMIN_PASSWORD` (12+ characters) and `ADMIN_NAME`. Paystack: see Secrets.
+must end in `-test`), `SITE_NAME`, and for seeding only the `SEED_*` variables
+(`SEED_ADMIN_USERNAME`, `SEED_ADMIN_PASSWORD`, `SEED_ADMIN_NAME`, and the
+operators' `SEED_ENTRY_PASSWORD`, `SEED_BOOTH_PASSWORD`, `SEED_EXIT_PASSWORD`;
+12+ characters, not an obvious choice). Delete them once seeding is done.
+Paystack: see Secrets.
 
 ### Seeds
 
 - `npm run seed:site` creates the site, its settings and the first admin
-  (from `ADMIN_USERNAME` / `ADMIN_PASSWORD`). It never changes what exists.
+  (from `SEED_ADMIN_USERNAME` / `SEED_ADMIN_PASSWORD`). It never changes what
+  exists.
 - `npm run unthrottle -- <username>` clears a username's sign-in throttle
-  counts (Hardening H1). It needs a shell on the server; Render's free tier has
-  none, so there wait out the 15 minutes or reset the password in the portal.
+  counts (Hardening H1). On the server it runs inside the api container (see
+  `docs/07-deploy-digitalocean.md`); else wait out the 15 minutes or reset the
+  password in the portal.
 - `npm run seed:test-data` (test sites only) adds TEST categories and prices,
   the locations `ENTRY_1`, `BOOTH_1`, `BOOTH_2` and `EXIT_1`, and one account
   per job:
@@ -67,10 +72,11 @@ must end in `-test`), `SITE_NAME`, and for the first run `ADMIN_USERNAME`,
   | `booth-1` | PAYMENT_OPERATOR | `BOOTH_1` |
   | `exit-1` | EXIT_OPERATOR | `EXIT_1` |
 
-  A new account's password is printed **once**, by the seed, and stored only
-  as its hash. Keep each one in your own `backend/.env` (for example as
-  `TEST_ENTRY_1_PASSWORD`) or reset it in the Admin Portal; never commit or
-  share it in chat. A second run creates nothing and shows no password.
+  Each password comes from its `SEED_*` variable (Sprint 6a): a missing, short
+  or obviously weak one is refused before anything is written. It is stored
+  only as its hash and printed nowhere. A second run creates nothing and never
+  changes an existing account's password. On the server both seeds run in the
+  compose `seed` service (`docs/07-deploy-digitalocean.md`).
 
 All prices in the seeds are TEST VALUES until Garki's real categories and
 prices are confirmed.

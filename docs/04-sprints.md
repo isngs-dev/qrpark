@@ -210,7 +210,16 @@ matches the database; CSV opens in Excel with correct amounts.
 
 ## Sprint 6 — Test deployment and end-to-end
 
-- Render Blueprint (backend Docker, Postgres, Redis, portal), runbook, seeds.
+- 6a: one DigitalOcean droplet: Docker Compose (Caddy for HTTPS, api, portal,
+  Postgres, Redis), migration 0006 (L2), backups with a tested restore,
+  seeding inside the api container, runbook, secrets list, go-live checklist.
+- 6b: the end-to-end run below on the droplet, then the operator guides. On
+  the droplet first: a **reboot test** (reboot it; every service comes back by
+  itself, healthy, and `/health` answers); the **Redis check** (`CONFIG GET`
+  maxmemory, maxmemory-policy `noeviction`, appendonly, and no finished jobs
+  piling up in the queue: closes L3); a **forged `X-Forwarded-For` check**
+  against the real Caddy (the sign-in throttle counts the real address, through
+  the api and through the portal).
 - End-to-end, entry → booth → exit: entry issues a ticket (prints as PDF); exit
   refuses it while UNPAID ("Payment required"); the booth takes cash for one
   ticket and card (Paystack test) for another; exit validates both; a second

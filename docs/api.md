@@ -159,7 +159,7 @@ x-qrpark-client-address: <address>;<unix seconds>;<HMAC-SHA256 hex of "qrpark-lo
 
 keyed with `QRPARK_CLIENT_ADDRESS_SECRET` (shared by the portal and the backend
 only, 32+ characters). The portal takes the address from the **rightmost**
-`X-Forwarded-For` entry (the one Render's proxy appends). The backend believes
+`X-Forwarded-For` entry (the one Caddy, the proxy in front, sets; Sprint 6a). The backend believes
 the header only on `POST /auth/login`, only when its secret is configured, the
 signature matches (constant-time) and the time is within 60 seconds; anything
 else (missing, forged, expired, another secret, tampered, repeated) is ignored

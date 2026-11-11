@@ -220,7 +220,7 @@ it.
 - Operational settings (categories, prices, payment window, receipt details,
   locations, users) live in the **database** and are edited in the Admin
   Portal. Environment variables are for infrastructure and secrets only.
-- Test environment on Render (as eparking). Production host is an open
+- Test environment on DigitalOcean (a single droplet). Production host is an open
   question.
 - Paystack **test keys only** until go-live is approved. Never commit a key.
 
@@ -264,7 +264,7 @@ If a sprint needs one of these, stop and ask:
   payment request), debug-device commissioning, and app review timeline
 - Whether our app can print and scan on the M960, or only through Paystack's
   receipt
-- Production hosting (the scope document suggests AWS; test runs on Render)
+- Production hosting (the scope document suggests AWS; test runs on DigitalOcean, a single droplet)
 - Garki's real categories and prices (seed TEST VALUES until then)
 - The organisation name and contact text printed on the ticket
 - Excel and PDF report exports (CSV in release 1) — to confirm with management
