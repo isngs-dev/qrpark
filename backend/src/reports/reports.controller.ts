@@ -2,13 +2,16 @@ import { Controller, Get, Param, Query, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 import { Roles } from '../auth/auth.guard';
-import { ReportsService, type Range } from './reports.service';
+import { ReportsService, type CsvPlan, type Range } from './reports.service';
+import { writeCsv } from './csv-stream';
 
 /**
  * The admin reports, read-only, ADMIN only (docs/api.md "Admin: reports").
  * Every list route answers JSON, or a CSV with ?format=csv (from and to
- * required, at most 31 days, at most 50,000 rows). Unknown query fields are
- * refused (400) by the global validation pipe.
+ * required). A CSV covers at most 92 days, a JSON page 366; a CSV at most 1,048,575 rows
+ * (Excel's limit), counted before the file starts, and streamed in batches
+ * (Hardening H5). Unknown query fields are refused (400) by the global
+ * validation pipe.
  */
 
 class RangeQuery {
@@ -41,11 +44,17 @@ class DayQuery {
   @IsOptional() @IsString() @MaxLength(10) day?: string;
 }
 
-function sendCsv(res: Response, name: string, r: Range, body: string): string {
+/**
+ * Streams a CSV whose rows were already counted (a refusal was thrown before
+ * this point, as an ordinary JSON 400). From here the status is 200; a failure
+ * part-way aborts the connection (csv-stream.ts).
+ */
+async function sendCsv(res: Response, name: string, r: Range, plan: CsvPlan): Promise<void> {
+  res.status(200);
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="qrpark-${name}-${r.from}-to-${r.to}.csv"`);
   res.setHeader('Cache-Control', 'no-store');
-  return body;
+  await writeCsv(res, name, plan.header, plan.rows);
 }
 
 @Controller('admin')
@@ -61,12 +70,12 @@ export class ReportsController {
 
   @Roles('ADMIN')
   @Get('reports/transactions')
-  async transactions(@Query() q: TransactionsQuery, @Res({ passthrough: true }) res: Response) {
+  async transactions(@Query() q: TransactionsQuery, @Res() res: Response) {
     const csv = q.format === 'csv';
     const r = await this.reports.range(q, csv);
     const filters = { q: q.q, state: q.state, category: q.category, entryGate: q.entryGate, booth: q.booth, operator: q.operator, method: q.method };
     if (csv) return sendCsv(res, 'transactions', r, await this.reports.transactionsCsv(r, filters));
-    return this.reports.transactions(r, filters, this.reports.paging(q));
+    res.json(await this.reports.transactions(r, filters, this.reports.paging(q)));
   }
 
   @Roles('ADMIN')
@@ -77,28 +86,28 @@ export class ReportsController {
 
   @Roles('ADMIN')
   @Get('reports/incomplete')
-  async incomplete(@Query() q: RangeQuery, @Res({ passthrough: true }) res: Response) {
+  async incomplete(@Query() q: RangeQuery, @Res() res: Response) {
     const csv = q.format === 'csv';
     const r = await this.reports.range(q, csv);
     if (csv) return sendCsv(res, 'incomplete', r, await this.reports.incompleteCsv(r));
-    return this.reports.incomplete(r);
+    res.json(await this.reports.incomplete(r));
   }
 
   @Roles('ADMIN')
   @Get('reports/finance')
-  async finance(@Query() q: RangeQuery, @Res({ passthrough: true }) res: Response) {
+  async finance(@Query() q: RangeQuery, @Res() res: Response) {
     const csv = q.format === 'csv';
     const r = await this.reports.range(q, csv);
     if (csv) return sendCsv(res, 'finance', r, await this.reports.financeCsv(r));
-    return this.reports.finance(r);
+    res.json(await this.reports.finance(r));
   }
 
   @Roles('ADMIN')
   @Get('audit')
-  async audit(@Query() q: AuditQuery, @Res({ passthrough: true }) res: Response) {
+  async audit(@Query() q: AuditQuery, @Res() res: Response) {
     const csv = q.format === 'csv';
     const r = await this.reports.range(q, csv);
     if (csv) return sendCsv(res, 'audit', r, await this.reports.auditCsv(r, q));
-    return this.reports.audit(r, q, this.reports.paging(q));
+    res.json(await this.reports.audit(r, q, this.reports.paging(q)));
   }
 }

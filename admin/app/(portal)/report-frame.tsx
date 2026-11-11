@@ -33,7 +33,7 @@ export function ReportFrame({
               <a href={csv} className="font-medium text-accent underline">
                 Download CSV
               </a>{' '}
-              <span className="text-ink-soft">(at most 31 days, 50,000 rows)</span>
+              <span className="text-ink-soft">(at most 92 days and 1,048,575 rows, the most Excel opens)</span>
             </>
           ) : null}
         </p>

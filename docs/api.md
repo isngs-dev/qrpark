@@ -702,7 +702,7 @@ are no refunds, reversals or corrections anywhere.
 
 | Rule | Detail |
 |---|---|
-| Days | `from` and `to` are **Lagos days**, `YYYY-MM-DD`, inclusive, on the database clock. JSON: both optional (a missing one takes the other; none is today), at most **366 days**, `from <= to`, else 400 |
+| Days | `from` and `to` are **Lagos days**, `YYYY-MM-DD`, inclusive, on the database clock. JSON: both optional (a missing one takes the other; none is today), at most **366 days**, `from <= to`, else 400 `A report covers at most 366 days.` |
 | Attribution | Tickets by the Lagos day they were **issued**. Revenue by the Lagos day the backend recorded the payment **PAID** (`payment.paid_at`) |
 | Revenue | **SUCCESS payments only.** DUPLICATE card payments (refund in the Paystack dashboard) and card payments cancelled at the booth are listed apart and **never counted** |
 | Money | Integer kobo as JSON numbers. Counts and sums come from the database |
@@ -717,9 +717,27 @@ are no refunds, reversals or corrections anywhere.
 
 The transactions, incomplete, finance and audit routes also answer a CSV:
 
-- `from` and `to` **both required**, at most **31 days**; else 400.
-- At most **50,000 rows**; more is 400 `More than 50000 rows: narrow the date
-  range or the filters.` A CSV is never cut short.
+- `from` and `to` **both required**, at most **92 days** (about three months;
+  Hardening H5); else 400 `A CSV covers at most 92 days (about three months).
+  Choose a shorter range.`
+- At most **1,048,575 data rows** (Excel's limit, 1,048,576 rows less the
+  header). The rows are **counted first, with the CSV's own filters**, before
+  any byte is sent; more is 400 (JSON, the usual error shape)
+  `This range has 1,234,567 rows; a CSV holds at most 1,048,575 (the most Excel
+  can open). Choose a shorter range, for example one month at a time.` The
+  finance CSV counts its SUCCESS, DUPLICATE and cancelled rows. No other row
+  cap. A CSV is never cut short.
+- **Streamed** (Hardening H5): read by keyset paging, 5,000 rows at a time in
+  the file's order, each batch written as soon as it is read, with
+  back-pressure (the next batch waits until the client has taken the last).
+  Memory stays flat whatever the range. Once the file has started the status is
+  200; **a failure part-way aborts the connection** (no final chunk), so the
+  client sees a failed download, never a short file that looks complete. The
+  log line names the report, the rows sent and the error's class, never a
+  value. A client that goes away stops the reading.
+- Order: transactions and incomplete by issue time, then ticket id; finance
+  SUCCESS payments by paid time, then payment id, followed by the DUPLICATE and
+  cancelled rows; audit by time, then id.
 - `Content-Type: text/csv; charset=utf-8`,
   `Content-Disposition: attachment; filename="qrpark-<report>-<from>-to-<to>.csv"`,
   `Cache-Control: no-store`.

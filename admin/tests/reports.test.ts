@@ -108,13 +108,63 @@ test('the backend\'s file passes through byte for byte, with its filename, no-st
   assert.equal(f.calls[0].init?.method ?? 'GET', 'GET');
 });
 
+test('a large file is passed on as it arrives (H5): the response starts before the backend has finished, and nothing is held whole', async () => {
+  let push!: ReadableStreamDefaultController<Uint8Array>;
+  const source = new ReadableStream<Uint8Array>({ start: (c) => { push = c; } });
+  const f = fakeFetch(() => new Response(source, { status: 200, headers: { 'content-type': 'text/csv; charset=utf-8' } }));
+  push.enqueue(new TextEncoder().encode('﻿Ticket\r\nAAAA-0001\r\n'));
+  // The backend has NOT finished: csvResponse must still answer.
+  const res = await Promise.race([
+    csvResponse('finance', new URLSearchParams('from=2026-11-01&to=2026-11-02'), 'tok', f.fn, 'http://backend'),
+    new Promise<'held'>((r) => setTimeout(() => r('held'), 1000)),
+  ]);
+  assert.notEqual(res, 'held', 'the route waited for the whole file');
+  const out = (res as Response).body!.getReader();
+  const first = await out.read();
+  assert.deepEqual([...first.value!.subarray(0, 3)], [0xef, 0xbb, 0xbf], 'the byte-order mark passes too');
+  assert.equal(new TextDecoder('utf-8', { ignoreBOM: true }).decode(first.value), '﻿Ticket\r\nAAAA-0001\r\n');
+  push.enqueue(new TextEncoder().encode('AAAA-0002\r\n'));
+  push.close();
+  const second = await out.read();
+  assert.equal(new TextDecoder().decode(second.value), 'AAAA-0002\r\n');
+  assert.equal((await out.read()).done, true);
+});
+
+test('a backend file that breaks part-way breaks the download too (H5): never a silently short file', async () => {
+  let push!: ReadableStreamDefaultController<Uint8Array>;
+  const source = new ReadableStream<Uint8Array>({ start: (c) => { push = c; } });
+  const f = fakeFetch(() => new Response(source, { status: 200, headers: { 'content-type': 'text/csv; charset=utf-8' } }));
+  push.enqueue(new TextEncoder().encode('﻿Ticket\r\nAAAA-0001\r\n'));
+  const res = await Promise.race([
+    csvResponse('finance', new URLSearchParams('from=2026-11-01&to=2026-11-02'), 'tok', f.fn, 'http://backend'),
+    new Promise<'held'>((r) => setTimeout(() => r('held'), 1000)),
+  ]);
+  assert.notEqual(res, 'held');
+  const out = (res as Response).body!.getReader();
+  await out.read();
+  push.error(new Error('backend connection aborted'));
+  await assert.rejects(out.read(), 'the reader sees the failure, not an end');
+});
+
+test('the CSV route never reads the whole file into memory (H5)', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../lib/csv-route.ts', import.meta.url), 'utf8');
+  const success = src.slice(src.indexOf("if (!type.startsWith('text/csv'))"), src.indexOf('/** The backend\'s own words'));
+  assert.ok(success.length > 0);
+  assert.doesNotMatch(success, /arrayBuffer|\.text\(\)|\.blob\(\)|\.json\(\)/);
+  assert.match(success, /new Response\(answer\.body,/);
+});
+
 test('the backend\'s refusal is shown as written, with its status (H4: on a small portal page)', async () => {
-  const msg = 'More than 50000 rows: narrow the date range or the filters.';
+  const msg = 'This range has 1,234,567 rows; a CSV holds at most 1,048,575 (the most Excel can open). Choose a shorter range, for example one month at a time.';
   const f = fakeFetch(() => new Response(JSON.stringify({ statusCode: 400, message: msg, error: 'Bad Request' }), { status: 400, headers: { 'content-type': 'application/json' } }));
   const res = await csvResponse('transactions', new URLSearchParams('from=2026-10-01&to=2026-10-31'), 'tok', f.fn, 'http://backend');
   assert.equal(res.status, 400);
   const page = await res.text();
   assert.ok(page.includes(`<p class="message">${msg}</p>`), 'the backend\'s words, as written');
+  // H5: the page's own note gives the new rule.
+  assert.ok(page.includes('<p class="note">A CSV covers at most 92 days (about three months) and 1,048,575 rows (the most Excel can open); for more, download a shorter range. Nothing was changed.</p>'), page);
+  assert.doesNotMatch(page, /31 days|50,000/);
   assert.match(res.headers.get('content-type') ?? '', /^text\/html; charset=utf-8/);
   assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
   assert.equal(res.headers.get('cache-control'), 'no-store');
@@ -131,7 +181,7 @@ test('the refusal page escapes the backend\'s words and the filters (no markup g
 });
 
 test('the refusal page links back to the report with its own filters only', async () => {
-  const f = fakeFetch(() => new Response(JSON.stringify({ message: 'A CSV covers at most 31 days.' }), { status: 400, headers: { 'content-type': 'application/json' } }));
+  const f = fakeFetch(() => new Response(JSON.stringify({ message: 'A CSV covers at most 92 days (about three months). Choose a shorter range.' }), { status: 400, headers: { 'content-type': 'application/json' } }));
   const res = await csvResponse('transactions', new URLSearchParams('from=2026-09-01&to=2026-11-09&q=K7&state=PAID'), 'tok', f.fn, 'http://backend');
   assert.match(await res.text(), /<a href="\/transactions\?from=2026-09-01&amp;to=2026-11-09&amp;q=K7&amp;state=PAID">Back to the report<\/a>/);
   const audit = await csvResponse('audit', new URLSearchParams('from=2026-09-01&to=2026-11-09'), 'tok', f.fn, 'http://backend');

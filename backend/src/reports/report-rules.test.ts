@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  EXCEL_MAX_ROWS,
   CSV_MAX_DAYS,
-  CSV_ROW_CAP,
+  JSON_MAX_DAYS,
   auditDetail,
   csvCell,
   csvDocument,
@@ -10,7 +11,7 @@ import {
   nairaPlain,
   parseRange,
   personLabel,
-  rowCapProblem,
+  rowLimitProblem,
 } from './report-rules';
 
 /** Sprint 5a: the pure rules behind the report routes and their CSV. */
@@ -101,18 +102,31 @@ test('a range defaults to today; from/to are Lagos days, from <= to', () => {
   assert.throws(() => parseRange({ from: '2026-02-30', to: '2026-03-01' }, '2026-11-09', false));
   assert.throws(() => parseRange({ from: '09/11/2026' }, '2026-11-09', false));
   assert.throws(() => parseRange({ from: '2025-01-01', to: '2026-11-09' }, '2026-11-09', false), /366/);
+  // A JSON page covers at most 366 days (as before H5): 2025-11-09..2026-11-09 is exactly 366; one day more is refused.
+  assert.equal(JSON_MAX_DAYS, 366);
+  assert.deepEqual(parseRange({ from: '2025-11-09', to: '2026-11-09' }, '2026-11-09', false), { from: '2025-11-09', to: '2026-11-09' });
+  assert.throws(() => parseRange({ from: '2025-11-08', to: '2026-11-09' }, '2026-11-09', false), /^BadRequestException: A report covers at most 366 days\.$/);
 });
 
-test(`a CSV needs both dates, at most ${CSV_MAX_DAYS} days`, () => {
+test(`a CSV needs both dates, and covers at most ${CSV_MAX_DAYS} days (about three months)`, () => {
+  assert.equal(CSV_MAX_DAYS, 92);
   assert.throws(() => parseRange({}, '2026-11-09', true), /from and to/);
   assert.throws(() => parseRange({ from: '2026-11-01' }, '2026-11-09', true), /from and to/);
-  assert.deepEqual(parseRange({ from: '2026-10-10', to: '2026-11-09' }, '2026-11-09', true), { from: '2026-10-10', to: '2026-11-09' });
-  assert.throws(() => parseRange({ from: '2026-10-09', to: '2026-11-09' }, '2026-11-09', true), /31 days/);
+  // 2026-08-10..2026-11-09 is exactly 92 Lagos days; one day more is refused for a CSV, still fine for a JSON page.
+  assert.deepEqual(parseRange({ from: '2026-08-10', to: '2026-11-09' }, '2026-11-09', true), { from: '2026-08-10', to: '2026-11-09' });
+  assert.throws(() => parseRange({ from: '2026-08-09', to: '2026-11-09' }, '2026-11-09', true), /^BadRequestException: A CSV covers at most 92 days \(about three months\)\. Choose a shorter range\.$/);
+  assert.deepEqual(parseRange({ from: '2026-08-09', to: '2026-11-09' }, '2026-11-09', false), { from: '2026-08-09', to: '2026-11-09' });
 });
 
-test(`a CSV over ${CSV_ROW_CAP} rows is refused, never cut short silently`, () => {
-  assert.equal(rowCapProblem(CSV_ROW_CAP), null);
-  assert.match(rowCapProblem(CSV_ROW_CAP + 1) ?? '', /narrow/i);
+test(`a CSV holds at most ${EXCEL_MAX_ROWS} data rows (Excel's limit); more is refused with the count, never cut short`, () => {
+  assert.equal(EXCEL_MAX_ROWS, 1_048_575);
+  assert.equal(rowLimitProblem(EXCEL_MAX_ROWS), null);
+  assert.equal(rowLimitProblem(0), null);
+  assert.equal(
+    rowLimitProblem(1_234_567),
+    'This range has 1,234,567 rows; a CSV holds at most 1,048,575 (the most Excel can open). Choose a shorter range, for example one month at a time.',
+  );
+  assert.match(rowLimitProblem(EXCEL_MAX_ROWS + 1) ?? '', /1,048,576 rows/);
 });
 
 // ---------------------------------------------------------------- people

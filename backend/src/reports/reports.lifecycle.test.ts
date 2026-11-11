@@ -1,4 +1,4 @@
-import { after, before, test } from 'node:test';
+import { after, before, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import * as argon2 from 'argon2';
@@ -6,7 +6,7 @@ import { bootTestApp, call, type TestApp } from '../test-support/app';
 import { startCard } from '../test-support/payments';
 import { fakeTicketNumber, fakeToken } from '../test-support/db';
 import { as, newKey } from '../test-support/tickets';
-import { CSV_MAX_DAYS } from './report-rules';
+import { CSV_MAX_DAYS, JSON_MAX_DAYS } from './report-rules';
 
 /**
  * Sprint 5a: the read-only report routes (ADMIN only). docs/api.md,
@@ -16,10 +16,17 @@ import { CSV_MAX_DAYS } from './report-rules';
  */
 
 let t: TestApp;
+// The Lagos day by the database's clock (the clock the backend's "today" uses),
+// read again before EVERY test: a run that crosses midnight, or a machine that
+// sleeps, must not leave later tests on yesterday's date. Fixed dates in this
+// file are all in the past and never compared with today.
 let today: string;
 let yesterday: string;
 before(async () => {
   t = await bootTestApp();
+  await dropBulkMarkers(); // rows a killed run could not drop
+});
+beforeEach(async () => {
   const [d] = await t.prisma.$queryRawUnsafe<Array<{ today: string; yesterday: string }>>(
     `SELECT to_char(now() AT TIME ZONE 'Africa/Lagos', 'YYYY-MM-DD') AS today,
             to_char(now() AT TIME ZONE 'Africa/Lagos' - interval '1 day', 'YYYY-MM-DD') AS yesterday`,
@@ -27,7 +34,10 @@ before(async () => {
   today = d.today;
   yesterday = d.yesterday;
 });
-after(() => t?.close());
+after(async () => {
+  if (t) await dropBulkMarkers();
+  await t?.close();
+});
 
 const admin = async (path: string) => call(t, 'GET', path, { token: await t.accessToken(t.users.admin.id) });
 const tag = () => randomBytes(3).toString('hex');
@@ -381,18 +391,217 @@ test('CSV: text/csv attachment, UTF-8 with a BOM, CRLF, naira from kobo, Lagos t
   assert.match(line, new RegExp(`${today} \\d{2}:\\d{2}`), 'Lagos time');
 });
 
-test(`CSV: needs from and to, at most ${CSV_MAX_DAYS} days; JSON pages are capped too`, async () => {
+test(`CSV: needs from and to, at most ${CSV_MAX_DAYS} days; JSON pages at most ${JSON_MAX_DAYS} days`, async () => {
+  // Fixed past days: the range rules never compare them with today.
+  // 2026-08-10..2026-11-09 is exactly 92 days; 2025-11-09..2026-11-09 exactly 366.
   for (const r of ['transactions', 'incomplete', 'finance']) {
     const noRange = await admin(`/admin/reports/${r}?format=csv`);
     assert.equal(noRange.status, 400, `${r}: ${JSON.stringify(noRange.body)}`);
-    const long = await admin(`/admin/reports/${r}?format=csv&from=2026-01-01&to=2026-03-01`);
+    const twoMonths = await csv(`/admin/reports/${r}?format=csv&from=2026-01-01&to=2026-03-01`);
+    assert.equal(twoMonths.status, 200, `${r}: ${twoMonths.text.slice(0, 200)}`);
+    const atLimit = await csv(`/admin/reports/${r}?format=csv&from=2026-08-10&to=2026-11-09`);
+    assert.equal(atLimit.status, 200, `${r} 92 days: ${atLimit.text.slice(0, 200)}`);
+    const long = await admin(`/admin/reports/${r}?format=csv&from=2026-08-09&to=2026-11-09`);
     assert.equal(long.status, 400, r);
-    assert.match(JSON.stringify(long.body), /31 days/);
+    assert.match(JSON.stringify(long.body), /A CSV covers at most 92 days \(about three months\)/);
+    // The same 93 days is fine as a JSON page; a JSON page stops at 366.
+    assert.equal((await admin(`/admin/reports/${r}?from=2026-08-09&to=2026-11-09`)).status, 200, `${r} JSON 93 days`);
+    assert.equal((await admin(`/admin/reports/${r}?from=2025-11-09&to=2026-11-09`)).status, 200, `${r} JSON 366 days`);
+    const longJson = await admin(`/admin/reports/${r}?from=2025-11-08&to=2026-11-09`);
+    assert.equal(longJson.status, 400, `${r} JSON 367 days`);
+    assert.match(JSON.stringify(longJson.body), /at most 366 days/);
   }
+  assert.equal((await admin('/admin/audit?format=csv&from=2026-08-09&to=2026-11-09')).status, 400);
   assert.equal((await admin('/admin/audit?format=csv')).status, 400);
   assert.equal((await admin('/admin/reports/finance?format=xlsx')).status, 400);
   assert.equal((await admin('/admin/reports/finance?from=2026-11-09&to=2026-11-01')).status, 400);
   assert.equal((await admin('/admin/reports/finance?from=nonsense')).status, 400);
+});
+
+// ================================================================ H5: streamed CSV
+
+/**
+ * [count] UNPAID tickets on Lagos day [day] by SQL, [tie] of them sharing each
+ * issue time (to the microsecond), for the streaming tests. Returns how many
+ * went in (a rare ticket-number clash is skipped) and the key prefix.
+ */
+async function bulkTickets(w: Awaited<ReturnType<typeof world>>, day: string, count: number, tie: number) {
+  const prefix = `${BULK_MARKER}${tag()}-`;
+  const [{ n }] = await t.prisma.$queryRawUnsafe<Array<{ n: number }>>(
+    `WITH ins AS (
+       INSERT INTO ticket (id, site_id, idempotency_key, token, ticket_number, operator_id, gate_id, device_ref,
+                           category_id, category_code, category_name, fee_kobo, issued_at, updated_at)
+       SELECT gen_random_uuid(), $1::uuid, $2 || i,
+              translate(rtrim(encode(sha256(($2 || i || random())::bytea), 'base64'), '='), '+/', '-_'),
+              translate(upper(substr(md5($2 || i), 1, 4)), '01', 'ZY') || '-' || translate(upper(substr(md5($2 || i), 5, 4)), '01', 'ZY'),
+              $3::uuid, $4::uuid, 'h5', c.id, c.code, c.name, c.price_kobo,
+              ($5::date)::timestamp AT TIME ZONE 'Africa/Lagos' + interval '1 hour' + (i / $7::int) * interval '0.123457 second', now()
+         FROM generate_series(1, $6::int) i, vehicle_category c WHERE c.id = $8::uuid
+       ON CONFLICT (site_id, ticket_number) DO NOTHING RETURNING 1)
+     SELECT count(*)::int AS n FROM ins`,
+    t.siteId, prefix, w.entryOp.id, w.entryGate.id, day, count, tie, w.cat.id,
+  );
+  return { n, prefix };
+}
+
+async function dropBulk(prefix: string) {
+  await t.prisma.$executeRawUnsafe(`DELETE FROM ticket WHERE site_id = $1::uuid AND idempotency_key LIKE $2 || '%'`, t.siteId, prefix);
+}
+
+/**
+ * Every bulk ticket of any run carries this marker (bulkTickets' prefix);
+ * nothing else does. Every run boots a site of its own, so the rows a killed
+ * run left sit in an older site: they are found by the marker, in any site.
+ */
+const BULK_MARKER = 'h5-';
+async function dropBulkMarkers() {
+  await t.prisma.$executeRawUnsafe(`DELETE FROM ticket WHERE idempotency_key LIKE $1 || '%'`, BULK_MARKER);
+}
+async function bulkMarkerRows(): Promise<number> {
+  const [r] = await t.prisma.$queryRawUnsafe<Array<{ n: number }>>(
+    `SELECT count(*)::int AS n FROM ticket WHERE idempotency_key LIKE $1 || '%'`,
+    BULK_MARKER,
+  );
+  return r.n;
+}
+
+test('H5: a CSV across several 5,000-row batches has every row exactly once, in order, even when many share an issue time', async () => {
+  const w = await world();
+  const day = '2024-03-01';
+  assert.equal(await bulkMarkerRows(), 0, 'no bulk rows left by an earlier run');
+  const { n, prefix } = await bulkTickets(w, day, 12_345, 700);
+  try {
+    const expected = await t.prisma.$queryRawUnsafe<Array<{ ticket_number: string }>>(
+      `SELECT ticket_number FROM ticket WHERE site_id = $1::uuid AND idempotency_key LIKE $2 || '%' ORDER BY issued_at, id`,
+      t.siteId, prefix,
+    );
+    assert.equal(expected.length, n);
+    const res = await csv(`/admin/reports/transactions?format=csv&from=${day}&to=${day}&entryGate=${w.entryGate.code}`);
+    assert.equal(res.status, 200, res.text.slice(0, 300));
+    const lines = res.text.replace(/^﻿/, '').split('\r\n');
+    assert.equal(lines.pop(), '', 'the file ends with CRLF');
+    assert.equal(lines.length, n + 1, 'header + one line per ticket');
+    assert.deepEqual(lines.slice(1).map((l) => l.split(',')[0]), expected.map((e) => e.ticket_number));
+    for (const r of ['incomplete']) {
+      const inc = await csv(`/admin/reports/${r}?format=csv&from=${day}&to=${day}`);
+      assert.equal(inc.text.replace(/^﻿/, '').split('\r\n').length - 2, n, r);
+    }
+  } finally {
+    await dropBulk(prefix);
+  }
+});
+
+test('H5: a large CSV streams with flat memory: what the backend holds while sending stays small, however big the file', async () => {
+  const { setFlagsFromString } = await import('node:v8');
+  const { runInNewContext } = await import('node:vm');
+  setFlagsFromString('--expose-gc');
+  const gc = runInNewContext('gc') as () => void;
+
+  const w = await world();
+  const day = '2024-02-29';
+  assert.equal(await bulkMarkerRows(), 0, 'no bulk rows left by an earlier run');
+  const t0 = Date.now();
+  const { n, prefix } = await bulkTickets(w, day, 250_000, 3);
+  const insertS = (Date.now() - t0) / 1000;
+  try {
+    // Live memory, not garbage waiting to be collected: a full collection before each reading.
+    // The JavaScript heap AND buffers outside it (a whole file sent at once sits in one).
+    const live = () => {
+      gc();
+      const m = process.memoryUsage();
+      return m.heapUsed + m.external;
+    };
+    const base = live();
+    let peak = base;
+    let readings = 0;
+    const held = () => {
+      readings++;
+      peak = Math.max(peak, live());
+    };
+    const timer = setInterval(held, 100); // also while the backend reads, before the first byte
+    const t1 = Date.now();
+    const res = await fetch(`${t.url}/admin/reports/transactions?format=csv&from=${day}&to=${day}&entryGate=${w.entryGate.code}`, {
+      headers: { authorization: `Bearer ${await t.accessToken(t.users.admin.id)}` },
+    });
+    assert.equal(res.status, 200);
+    let bytes = 0;
+    let lf = 0;
+    let chunks = 0;
+    const reader = res.body!.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      for (let i = 0; i < value.length; i++) if (value[i] === 0x0a) lf++;
+      if (++chunks % 10 === 0) held();
+    }
+    clearInterval(timer);
+    const downloadS = (Date.now() - t1) / 1000;
+    const growthMb = (peak - base) / 2 ** 20;
+    const fileMb = bytes / 2 ** 20;
+    console.log(
+      `H5 memory: ${n} rows, file ${fileMb.toFixed(1)} MB, most the backend held while sending ${growthMb.toFixed(1)} MB ` +
+        `(${readings} readings); insert ${insertS.toFixed(1)} s, download ${downloadS.toFixed(1)} s`,
+    );
+    assert.equal(lf, n + 1, 'every row arrived');
+    assert.ok(readings >= 10, `enough readings during the download (${readings})`);
+    assert.ok(fileMb > 20, `a file big enough to tell (${fileMb.toFixed(1)} MB)`);
+    assert.ok(growthMb < 10 && growthMb < fileMb / 2, `held ${growthMb.toFixed(1)} MB while sending a ${fileMb.toFixed(1)} MB file`);
+  } finally {
+    await dropBulk(prefix);
+  }
+});
+
+test('H5: over the row limit, every CSV is refused before any byte is sent, with the count and "one month at a time"', async () => {
+  const { ReportsService } = await import('./reports.service');
+  const svc = t.app.get(ReportsService) as unknown as { csvRowLimit: number };
+  const w = await world();
+  for (let i = 0; i < 4; i++) {
+    const tk = await ticket({ operatorId: w.entryOp.id, gateId: w.entryGate.id, categoryId: w.cat.id });
+    await pay(tk, { method: 'CASH', boothId: w.booth.id, operatorId: w.boothOp.id });
+  }
+  // Two audit rows of today, whatever ran before.
+  for (const role of ['ENTRY_OPERATOR', 'EXIT_OPERATOR'] as const) {
+    const gone = await operator(role, role === 'ENTRY_OPERATOR' ? w.entryGate.id : w.exit.id);
+    assert.equal((await call(t, 'DELETE', `/admin/users/${gone.id}`, { token: await t.accessToken(t.users.admin.id) })).status, 200);
+  }
+  const saved = svc.csvRowLimit;
+  assert.equal(saved, 1_048_575, 'Excel\'s limit');
+  svc.csvRowLimit = 1; // the real limit needs a million rows: the scratch-database proof covers that
+  try {
+    for (const path of [
+      `/admin/reports/transactions?format=csv&from=${today}&to=${today}&entryGate=${w.entryGate.code}`,
+      `/admin/reports/incomplete?format=csv&from=${today}&to=${today}`,
+      `/admin/reports/finance?format=csv&from=${today}&to=${today}`,
+      `/admin/audit?format=csv&from=${today}&to=${today}`,
+    ]) {
+      const res = await csv(path);
+      assert.equal(res.status, 400, `${path}: ${res.text.slice(0, 200)}`);
+      assert.doesNotMatch(res.type, /text\/csv/, 'refused before the file starts');
+      assert.match(res.text, /This range has [\d,]+ rows; a CSV holds at most 1 .*for example one month at a time\./, path);
+    }
+    // This world's four tickets: exactly at a limit of 4 is a file.
+    svc.csvRowLimit = 4;
+    const atLimit = await csv(`/admin/reports/transactions?format=csv&from=${today}&to=${today}&entryGate=${w.entryGate.code}`);
+    assert.equal(atLimit.status, 200, atLimit.text.slice(0, 200));
+    assert.equal(atLimit.text.replace(/^﻿/, '').split('\r\n').length, 4 + 2);
+  } finally {
+    svc.csvRowLimit = saved;
+  }
+});
+
+test('H5: the finance CSV still lists DUPLICATE and cancelled payments after the paid ones', async () => {
+  const w = await world();
+  const tk = await ticket({ operatorId: w.entryOp.id, gateId: w.entryGate.id, categoryId: w.cat.id });
+  const paid = await pay(tk, { method: 'CARD', boothId: w.booth.id, operatorId: w.boothOp.id });
+  const dup = await pay(tk, { method: 'CARD', boothId: w.booth.id, operatorId: w.boothOp.id, status: 'DUPLICATE' });
+  const res = await csv(`/admin/reports/finance?format=csv&from=${today}&to=${today}`);
+  assert.equal(res.status, 200);
+  const lines = res.text.split('\r\n');
+  const iPaid = lines.findIndex((l) => l.includes(paid.reference));
+  const iDup = lines.findIndex((l) => l.includes(dup.reference));
+  assert.ok(iPaid > 0 && iDup > iPaid, `${iPaid} ${iDup}`);
+  assert.match(lines[iDup], /,DUPLICATE,no,/);
 });
 
 // ================================================================ audit

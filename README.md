@@ -103,6 +103,15 @@ ADMIN accounts sign in. `npm test` runs the portal's rule tests and source
 scan; `npm run build && npm start -- -p 3001` runs it as in production
 (Secure `__Host-` cookies).
 
+Reports and CSV downloads (Hardening H5): a report page covers up to 366
+Lagos days, a CSV up to 92 (about three months). A CSV holds at most 1,048,575
+rows, the most Excel opens; the backend counts the rows first and refuses a
+bigger file with the count (choose a shorter range). The CSV is streamed: the
+backend reads 5,000 rows at a time and the portal passes the bytes on as they
+come, so neither holds the whole file and a three-month export needs no more
+memory than a day's. If something fails part-way, the download is broken off rather than
+delivered short.
+
 Android: see `android/BUILDING.md` (JDK 21, Gradle 8.9). The debug APK is
 `android/app/build/apk/qrpark-<version>-debug.apk`; it talks to the backend
 at `http://10.0.2.2:3000` from the emulator.

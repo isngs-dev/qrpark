@@ -6,15 +6,16 @@ import {
   PAGE_SIZE_DEFAULT,
   PAGE_SIZE_MAX,
   auditDetail,
+  EXCEL_MAX_ROWS,
   csvCell,
-  csvDocument,
   lagosStamp,
   nairaPlain,
   parseRange,
   personLabel,
-  rowCapProblem,
+  rowLimitProblem,
   type AuditField,
 } from './report-rules';
+import { CSV_BATCH_ROWS, keysetPages } from './csv-stream';
 
 /**
  * The admin reports (Sprint 5a, docs/api.md "Admin: reports"). READ-ONLY:
@@ -209,33 +210,29 @@ export class ReportsService {
     return { ...r, page: paging.page, pageSize: paging.pageSize, total: n(total), rows: rows.map((x) => this.txRow(x)) };
   }
 
-  async transactionsCsv(r: Range, f: TransactionFilters): Promise<string> {
+  async transactionsCsv(r: Range, f: TransactionFilters): Promise<CsvPlan> {
     const siteId = await this.site.getId();
     const { params, where } = this.txWhere(siteId, r, f);
     const [{ total }] = await this.prisma.$queryRawUnsafe<Array<{ total: bigint }>>(
       `SELECT COUNT(*) AS total ${ReportsService.TX_FROM} WHERE ${where}`,
       ...params,
     );
-    const cap = rowCapProblem(n(total));
-    if (cap) throw new BadRequestException(cap);
-    const rows = (
-      await this.prisma.$queryRawUnsafe<Array<Record<string, any>>>(
-        `SELECT ${ReportsService.TX_COLUMNS} ${ReportsService.TX_FROM} WHERE ${where} ORDER BY t.issued_at, t.id`,
-        ...params,
-      )
-    ).map((x) => this.txRow(x));
-    return csvDocument(
-      ['Ticket', 'Issued (Lagos)', 'Vehicle', 'Amount (NGN)', 'Amount (kobo)', 'Entry gate', 'Issued by', 'State',
+    this.checkRows(n(total));
+    return {
+      header: ['Ticket', 'Issued (Lagos)', 'Vehicle', 'Amount (NGN)', 'Amount (kobo)', 'Entry gate', 'Issued by', 'State',
         'Method', 'Paid (Lagos)', 'Booth', 'Paid by', 'Validated (Lagos)', 'Exit gate', 'Validated by'],
-      rows.map((x) => [
-        csvCell(x.ticketNumber, 'text'), csvCell(lagosStamp(x.issuedAt), 'text'), csvCell(x.categoryName, 'text'),
-        csvCell(nairaPlain(x.feeKobo), 'amount'), csvCell(String(x.feeKobo), 'int'),
-        csvCell(x.entryGate?.name, 'text'), csvCell(x.issuedBy?.label, 'text'), csvCell(x.state, 'text'),
-        csvCell(x.paymentMethod, 'text'), csvCell(lagosStamp(x.paidAt), 'text'), csvCell(x.booth?.name, 'text'),
-        csvCell(x.paidBy?.label, 'text'), csvCell(lagosStamp(x.validatedAt), 'text'), csvCell(x.exitGate?.name, 'text'),
-        csvCell(x.validatedBy?.label, 'text'),
-      ]),
-    );
+      rows: cells(this.pages(ReportsService.TX_COLUMNS, ReportsService.TX_FROM, where, params, 't.issued_at', 't.id'), (row) => {
+        const x = this.txRow(row);
+        return [
+          csvCell(x.ticketNumber, 'text'), csvCell(lagosStamp(x.issuedAt), 'text'), csvCell(x.categoryName, 'text'),
+          csvCell(nairaPlain(x.feeKobo), 'amount'), csvCell(String(x.feeKobo), 'int'),
+          csvCell(x.entryGate?.name, 'text'), csvCell(x.issuedBy?.label, 'text'), csvCell(x.state, 'text'),
+          csvCell(x.paymentMethod, 'text'), csvCell(lagosStamp(x.paidAt), 'text'), csvCell(x.booth?.name, 'text'),
+          csvCell(x.paidBy?.label, 'text'), csvCell(lagosStamp(x.validatedAt), 'text'), csvCell(x.exitGate?.name, 'text'),
+          csvCell(x.validatedBy?.label, 'text'),
+        ];
+      }),
+    };
   }
 
   async transaction(id: string) {
@@ -345,35 +342,28 @@ export class ReportsService {
     };
   }
 
-  async incompleteCsv(r: Range): Promise<string> {
+  async incompleteCsv(r: Range): Promise<CsvPlan> {
     const siteId = await this.site.getId();
     const where = `t.site_id = $1::uuid AND ${inRange('t.issued_at', 2, 3)} AND t.validation_status = 'NOT_VALIDATED'`;
+    const params = [siteId, r.from, r.to];
     const [{ total }] = await this.prisma.$queryRawUnsafe<Array<{ total: bigint }>>(
       `SELECT COUNT(*) AS total FROM ticket t WHERE ${where}`,
-      siteId,
-      r.from,
-      r.to,
+      ...params,
     );
-    const cap = rowCapProblem(n(total));
-    if (cap) throw new BadRequestException(cap);
-    const rows = (
-      await this.prisma.$queryRawUnsafe<Array<Record<string, any>>>(
-        `SELECT ${ReportsService.TX_COLUMNS} ${ReportsService.TX_FROM} WHERE ${where} ORDER BY t.issued_at, t.id`,
-        siteId,
-        r.from,
-        r.to,
-      )
-    ).map((x) => this.txRow(x));
-    return csvDocument(
-      ['Ticket', 'Issued (Lagos)', 'Status', 'Vehicle', 'Amount (NGN)', 'Amount (kobo)', 'Entry gate', 'Issued by', 'Paid', 'Booth', 'Paid by'],
-      rows.map((x) => [
-        csvCell(x.ticketNumber, 'text'), csvCell(lagosStamp(x.issuedAt), 'text'),
-        csvCell(x.state === 'EXPIRED' ? 'Never validated' : 'In progress', 'text'), csvCell(x.categoryName, 'text'),
-        csvCell(nairaPlain(x.feeKobo), 'amount'), csvCell(String(x.feeKobo), 'int'), csvCell(x.entryGate?.name, 'text'),
-        csvCell(x.issuedBy?.label, 'text'), csvCell(x.paymentMethod ? 'yes' : 'no', 'text'),
-        csvCell(x.booth?.name ?? 'Unpaid (no booth)', 'text'), csvCell(x.paidBy?.label, 'text'),
-      ]),
-    );
+    this.checkRows(n(total));
+    return {
+      header: ['Ticket', 'Issued (Lagos)', 'Status', 'Vehicle', 'Amount (NGN)', 'Amount (kobo)', 'Entry gate', 'Issued by', 'Paid', 'Booth', 'Paid by'],
+      rows: cells(this.pages(ReportsService.TX_COLUMNS, ReportsService.TX_FROM, where, params, 't.issued_at', 't.id'), (row) => {
+        const x = this.txRow(row);
+        return [
+          csvCell(x.ticketNumber, 'text'), csvCell(lagosStamp(x.issuedAt), 'text'),
+          csvCell(x.state === 'EXPIRED' ? 'Never validated' : 'In progress', 'text'), csvCell(x.categoryName, 'text'),
+          csvCell(nairaPlain(x.feeKobo), 'amount'), csvCell(String(x.feeKobo), 'int'), csvCell(x.entryGate?.name, 'text'),
+          csvCell(x.issuedBy?.label, 'text'), csvCell(x.paymentMethod ? 'yes' : 'no', 'text'),
+          csvCell(x.booth?.name ?? 'Unpaid (no booth)', 'text'), csvCell(x.paidBy?.label, 'text'),
+        ];
+      }),
+    };
   }
 
   // ============================================================ finance
@@ -466,34 +456,38 @@ export class ReportsService {
     };
   }
 
-  async financeCsv(r: Range): Promise<string> {
+  async financeCsv(r: Range): Promise<CsvPlan> {
     const siteId = await this.site.getId();
-    const [{ total }] = await this.prisma.$queryRawUnsafe<Array<{ total: bigint }>>(
-      `SELECT COUNT(*) AS total FROM payment p WHERE p.site_id = $1::uuid AND p.status = 'SUCCESS' AND ${inRange('p.paid_at', 2, 3)}`,
-      siteId, r.from, r.to,
-    );
-    const cap = rowCapProblem(n(total));
-    if (cap) throw new BadRequestException(cap);
-    const paid = await this.prisma.$queryRawUnsafe<Array<any>>(
-      `SELECT p.paid_at, t.ticket_number, p.method::text AS method, p.amount_kobo, p.reference, g.name AS g_name, u.name AS u_name, u.deleted_at AS u_del
-         FROM payment p JOIN ticket t ON t.id = p.ticket_id JOIN gate g ON g.id = p.gate_id JOIN app_user u ON u.id = p.operator_id
-        WHERE p.site_id = $1::uuid AND p.status = 'SUCCESS' AND ${inRange('p.paid_at', 2, 3)} ORDER BY p.paid_at`,
-      siteId, r.from, r.to,
-    );
+    const params = [siteId, r.from, r.to];
+    const where = `p.site_id = $1::uuid AND p.status = 'SUCCESS' AND ${inRange('p.paid_at', 2, 3)}`;
+    const [{ total }] = await this.prisma.$queryRawUnsafe<Array<{ total: bigint }>>(`SELECT COUNT(*) AS total FROM payment p WHERE ${where}`, ...params);
+    // DUPLICATE and cancelled card payments are few: read whole, written after the paid ones.
     const { duplicates, cancelled } = await this.notRevenue(siteId, r);
+    this.checkRows(n(total) + duplicates.length + cancelled.length);
     const line = (at: Date | null, ticket: string, method: string, status: string, counted: boolean, kobo: number, booth: string | undefined, op: string | undefined, ref: string, note: string) => [
       csvCell(lagosStamp(at), 'text'), csvCell(ticket, 'text'), csvCell(method, 'text'), csvCell(status, 'text'),
       csvCell(counted ? 'yes' : 'no', 'text'), csvCell(nairaPlain(kobo), 'amount'), csvCell(String(kobo), 'int'),
       csvCell(booth, 'text'), csvCell(op, 'text'), csvCell(ref, 'text'), csvCell(note, 'text'),
     ];
-    return csvDocument(
-      ['Time (Lagos)', 'Ticket', 'Method', 'Status', 'Counted as revenue', 'Amount (NGN)', 'Amount (kobo)', 'Booth', 'Operator', 'Reference', 'Note'],
-      [
-        ...paid.map((p) => line(p.paid_at, p.ticket_number, p.method, 'SUCCESS', true, n(p.amount_kobo), p.g_name, personLabel(p.u_name, p.u_del), p.reference, '')),
+    const paid = cells(
+      this.pages(
+        `p.paid_at, t.ticket_number, p.method::text AS method, p.amount_kobo, p.reference, g.name AS g_name, u.name AS u_name, u.deleted_at AS u_del`,
+        `FROM payment p JOIN ticket t ON t.id = p.ticket_id JOIN gate g ON g.id = p.gate_id JOIN app_user u ON u.id = p.operator_id`,
+        where, params, 'p.paid_at', 'p.id',
+      ),
+      (p) => line(p.paid_at, p.ticket_number, p.method, 'SUCCESS', true, n(p.amount_kobo), p.g_name, personLabel(p.u_name, p.u_del), p.reference, ''),
+    );
+    async function* rows() {
+      yield* paid;
+      yield [
         ...duplicates.map((d) => line(d.paystackPaidAt, d.ticketNumber, 'CARD', 'DUPLICATE', false, d.amountKobo, d.booth?.name, d.operator?.label, d.reference, d.note)),
         ...cancelled.map((c) => line(c.cancelledAt, c.ticketNumber, 'CARD', 'CANCELLED', false, c.amountKobo, c.booth?.name, c.operator?.label, c.reference, c.forced ? 'Cancelled (forced: Paystack could not be reached)' : 'Cancelled at the booth')),
-      ],
-    );
+      ];
+    }
+    return {
+      header: ['Time (Lagos)', 'Ticket', 'Method', 'Status', 'Counted as revenue', 'Amount (NGN)', 'Amount (kobo)', 'Booth', 'Operator', 'Reference', 'Note'],
+      rows: rows(),
+    };
   }
 
   // ============================================================ dashboard
@@ -569,25 +563,76 @@ export class ReportsService {
     return { ...r, page: paging.page, pageSize: paging.pageSize, total: n(total), rows: rows.map((a) => this.auditRow(a)) };
   }
 
-  async auditCsv(r: Range, q: { action?: string; actor?: string }): Promise<string> {
+  async auditCsv(r: Range, q: { action?: string; actor?: string }): Promise<CsvPlan> {
     const siteId = await this.site.getId();
     const { params, where } = this.auditWhere(siteId, r, q);
     const [{ total }] = await this.prisma.$queryRawUnsafe<Array<{ total: bigint }>>(`SELECT COUNT(*) AS total FROM audit_log a WHERE ${where}`, ...params);
-    const cap = rowCapProblem(n(total));
-    if (cap) throw new BadRequestException(cap);
-    const rows = await this.prisma.$queryRawUnsafe<Array<Record<string, any>>>(
-      `SELECT a.id::text AS id, a.occurred_at, a.action::text AS action, a.target_type, a.detail,
-              u.id::text AS u_id, u.name AS u_name, u.deleted_at AS u_del
-         FROM audit_log a LEFT JOIN app_user u ON u.id = a.actor_id WHERE ${where} ORDER BY a.occurred_at, a.id`,
-      ...params,
-    );
+    this.checkRows(n(total));
     const flat = (d: AuditField[]) =>
       d.map((f) => (f.value !== undefined ? `${f.field}: ${f.value}` : `${f.field}: ${f.from} -> ${f.to}`)).join('; ');
-    return csvDocument(
-      ['Time (Lagos)', 'Action', 'By', 'Details'],
-      rows.map((a) => this.auditRow(a)).map((a) => [
-        csvCell(lagosStamp(a.occurredAt), 'text'), csvCell(a.action, 'text'), csvCell(a.actor?.label, 'text'), csvCell(flat(a.detail), 'text'),
-      ]),
+    return {
+      header: ['Time (Lagos)', 'Action', 'By', 'Details'],
+      rows: cells(
+        this.pages(
+          `a.id::text AS id, a.occurred_at, a.action::text AS action, a.target_type, a.detail, u.id::text AS u_id, u.name AS u_name, u.deleted_at AS u_del`,
+          `FROM audit_log a LEFT JOIN app_user u ON u.id = a.actor_id`,
+          where, params, 'a.occurred_at', 'a.id',
+        ),
+        (row) => {
+          const a = this.auditRow(row);
+          return [csvCell(lagosStamp(a.occurredAt), 'text'), csvCell(a.action, 'text'), csvCell(a.actor?.label, 'text'), csvCell(flat(a.detail), 'text')];
+        },
+      ),
+    };
+  }
+
+  // ============================================================ CSV plumbing (Hardening H5)
+
+  /**
+   * The most data rows one CSV may hold: Excel's limit. A field (not the
+   * constant inline) so the lifecycle test can show every CSV checks it
+   * without writing a million rows; the scratch-database proof covers the
+   * real limit.
+   */
+  csvRowLimit = EXCEL_MAX_ROWS;
+
+  /** Counted with the CSV's own filters, before any byte is sent: over the limit is a 400 with the count. */
+  private checkRows(total: number): void {
+    const problem = rowLimitProblem(total, this.csvRowLimit);
+    if (problem) throw new BadRequestException(problem);
+  }
+
+  /**
+   * The rows of `SELECT [select] [from] WHERE [where]` in order of
+   * ([at], [id]), CSV_BATCH_ROWS at a time by keyset paging. The timestamp
+   * goes back to the database as text, so no microsecond is lost (a
+   * JavaScript Date keeps milliseconds only).
+   */
+  private pages(select: string, from: string, where: string, params: unknown[], at: string, id: string) {
+    const a = params.length + 1;
+    const b = params.length + 2;
+    return keysetPages<Record<string, any>>(
+      (after) =>
+        this.prisma.$queryRawUnsafe<Array<Record<string, any>>>(
+          `SELECT ${select}, ${at}::text AS k_at, ${id}::text AS k_id ${from}
+            WHERE ${where}${after ? ` AND (${at}, ${id}) > ($${a}::timestamptz, $${b}::uuid)` : ''}
+            ORDER BY ${at}, ${id} LIMIT ${CSV_BATCH_ROWS}`,
+          ...params,
+          ...(after ? [after.k_at, after.k_id] : []),
+        ),
+      CSV_BATCH_ROWS,
     );
   }
 }
+
+/** A CSV to stream: its header and its rows, batch by batch, every cell already through csvCell. */
+export interface CsvPlan {
+  header: string[];
+  rows: AsyncIterable<string[][]>;
+}
+
+/** Each page of database rows as CSV rows. */
+async function* cells<R>(pages: AsyncIterable<R[]>, row: (r: R) => string[]): AsyncGenerator<string[][]> {
+  for await (const page of pages) yield page.map(row);
+}
+

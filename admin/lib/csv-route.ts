@@ -7,9 +7,12 @@ import { REPORTS, csvBackendPath } from './reports-types.ts';
  *
  *   - no admin cookie: 401, the backend is not called
  *   - only the four reports, only each report's parameters (csvBackendPath)
- *   - the backend's file passes through byte for byte, with its own
- *     Content-Type and Content-Disposition, plus Cache-Control no-store and
- *     X-Content-Type-Options nosniff; no other backend header passes
+ *   - the backend's file passes through byte for byte, AS A STREAM
+ *     (Hardening H5: a file of a year or more is never held whole here; if
+ *     the backend's stream breaks, the download breaks too, never a short
+ *     file), with its own Content-Type and Content-Disposition, plus
+ *     Cache-Control no-store and X-Content-Type-Options nosniff; no other
+ *     backend header passes
  *   - every refusal (Hardening H4) is a small portal-styled page with the
  *     backend's words as written (HTML-escaped), a "Back to the report" link
  *     carrying only that report's own filters, the same status, no-store and
@@ -49,7 +52,7 @@ export async function csvResponse(
   const headers: Record<string, string> = { 'Content-Type': type, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
   const disposition = answer.headers.get('content-disposition');
   if (disposition) headers['Content-Disposition'] = disposition;
-  return new Response(await answer.arrayBuffer(), { status: 200, headers });
+  return new Response(answer.body, { status: 200, headers });
 }
 
 /** The backend's own words (Nest's `message`), else a plain sentence. */
@@ -107,7 +110,7 @@ export function refusalPage(status: number, message: string, report: string, sea
   <div class="card">
     <h1>The file could not be made</h1>
     <p class="message">${escapeHtml(message)}</p>
-    <p class="note">A CSV covers at most 31 days and 50,000 rows. Nothing was changed.</p>
+    <p class="note">A CSV covers at most 92 days (about three months) and 1,048,575 rows (the most Excel can open); for more, download a shorter range. Nothing was changed.</p>
     <a href="${escapeHtml(backLink(report, search))}">Back to the report</a>
   </div>
 </main>

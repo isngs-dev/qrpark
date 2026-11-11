@@ -5,14 +5,21 @@ import { BadRequestException } from '@nestjs/common';
  * report-rules.test.ts. No I/O here.
  */
 
-/** A CSV covers at most this many Lagos days, and needs both dates. */
-export const CSV_MAX_DAYS = 31;
+/**
+ * Hardening H5: a CSV covers at most this many Lagos days (about three
+ * months) and needs both dates. The CSV is streamed, so this is the owner's
+ * choice of range, not a memory guard.
+ */
+export const CSV_MAX_DAYS = 92;
 
-/** A CSV with more rows is refused ("narrow the range"), never cut short. */
-export const CSV_ROW_CAP = 50_000;
-
-/** A JSON report covers at most this many days. */
+/** A JSON report page covers at most this many Lagos days (as before H5). */
 export const JSON_MAX_DAYS = 366;
+
+/**
+ * Hardening H5: the most data rows one CSV holds, Excel's limit (1,048,576
+ * rows less the header). More is refused with the count, never cut short.
+ */
+export const EXCEL_MAX_ROWS = 1_048_575;
 
 /** Paging for the list routes. */
 export const PAGE_SIZE_DEFAULT = 50;
@@ -119,14 +126,20 @@ export function parseRange(q: { from?: string; to?: string }, today: string, csv
   if (!realDay(from) || !realDay(to)) throw new BadRequestException('from and to must be dates: YYYY-MM-DD.');
   if (from > to) throw new BadRequestException('from must not be after to.');
   const days = daysBetween(from, to);
-  if (csv && days > CSV_MAX_DAYS) throw new BadRequestException(`A CSV covers at most ${CSV_MAX_DAYS} days.`);
+  if (csv && days > CSV_MAX_DAYS) {
+    throw new BadRequestException(`A CSV covers at most ${CSV_MAX_DAYS} days (about three months). Choose a shorter range.`);
+  }
   if (days > JSON_MAX_DAYS) throw new BadRequestException(`A report covers at most ${JSON_MAX_DAYS} days.`);
   return { from, to };
 }
 
-/** null when [rows] may go into one CSV; otherwise why not. */
-export function rowCapProblem(rows: number): string | null {
-  return rows > CSV_ROW_CAP ? `More than ${CSV_ROW_CAP} rows: narrow the date range or the filters.` : null;
+const grouped = (v: number) => v.toLocaleString('en-US');
+
+/** null when [rows] may go into one CSV (at most [limit], Excel's by default); otherwise why not, with the count. */
+export function rowLimitProblem(rows: number, limit: number = EXCEL_MAX_ROWS): string | null {
+  return rows > limit
+    ? `This range has ${grouped(rows)} rows; a CSV holds at most ${grouped(limit)} (the most Excel can open). Choose a shorter range, for example one month at a time.`
+    : null;
 }
 
 // ---------------------------------------------------------------- people
