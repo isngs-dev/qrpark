@@ -213,7 +213,9 @@ matches the database; CSV opens in Excel with correct amounts.
 - 6a: one DigitalOcean droplet: Docker Compose (Caddy for HTTPS, api, portal,
   Postgres, Redis), migration 0006 (L2), backups with a tested restore,
   seeding inside the api container, runbook, secrets list, go-live checklist.
-- 6b: the end-to-end run below on the droplet, then the operator guides. On
+- 6b: the end-to-end run below on the droplet (the step-by-step script with
+  expected results and proofs: `docs/09-6b-test-script.md`), then the operator
+  guides. On
   the droplet first: a **reboot test** (reboot it; every service comes back by
   itself, healthy, and `/health` answers); the **Redis check** (`CONFIG GET`
   maxmemory, maxmemory-policy `noeviction`, appendonly, and no finished jobs
