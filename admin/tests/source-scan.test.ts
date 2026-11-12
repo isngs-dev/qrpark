@@ -130,9 +130,43 @@ test('no day from the portal\'s own clock, and every time is formatted in Africa
   assert.equal(locale.length, 0, where(locale));
 });
 
+/**
+ * UI-1: the one exception to the rule below, and only this file: the Finance
+ * charts' axis scale marks (rounded "nice" numbers, never a figure). It may
+ * import nothing, and only charts.tsx may import it.
+ */
+const SCALE_MARKS = 'app/(portal)/charts.scale.ts';
+
 test('no money is computed in the portal: no arithmetic on an amount in kobo', () => {
-  const sums = lines.filter((l) => !/^\s*(\*|\/\/)/.test(l.line) && /(\b\w*[kK]obo\b(\)|\])?\s*[-+*/%]\s*[\w(]|[\w)]\s*[-+*/%]\s*\w*\.\w*[kK]obo\b|reduce\([^)]*[kK]obo)/.test(l.line));
+  const sums = lines.filter((l) => l.path !== SCALE_MARKS && !/^\s*(\*|\/\/)/.test(l.line) && /(\b\w*[kK]obo\b(\)|\])?\s*[-+*/%]\s*[\w(]|[\w)]\s*[-+*/%]\s*\w*\.\w*[kK]obo\b|reduce\([^)]*[kK]obo)/.test(l.line));
   assert.equal(sums.length, 0, where(sums));
+});
+
+test('UI-1: the scale-marks exception is that one file: it imports nothing, formats no figure, and only charts.tsx uses it', () => {
+  const scale = all.find((f) => f.path === SCALE_MARKS);
+  assert.ok(scale, SCALE_MARKS);
+  assert.doesNotMatch(scale.text, /^\s*import\b/m, 'the scale marks import nothing');
+  assert.doesNotMatch(scale.text, /\bnaira\(/, 'the scale marks never format a figure with naira()');
+  const users = all.filter((f) => /charts\.scale/.test(f.text) && f.path !== SCALE_MARKS).map((f) => f.path);
+  assert.deepEqual(users, ['app/(portal)/charts.tsx']);
+  // Nowhere else is excused: the same scan, with the exception, still finds every other line.
+  assert.ok(lines.some((l) => l.path === SCALE_MARKS && /kobo\s*\/\s*100/.test(l.line)), 'the exception is needed (and used) there');
+});
+
+test('UI-1: every naira shown is a backend figure as it came (never an expression), and shares and bar lengths are display only', () => {
+  const calls = lines.filter((l) => !/^\s*(\*|\/\/)/.test(l.line) && /\bnaira\(/.test(l.line) && !/function naira\(/.test(l.line));
+  assert.ok(calls.length >= 15, `${calls.length} naira() calls`);
+  for (const c of calls) {
+    for (const m of c.line.matchAll(/\bnaira\(([^)]*)\)/g)) {
+      assert.match(m[1], /^[\w.]+$/, `${c.path}:${c.n}  naira(${m[1]}) is not a plain figure`);
+    }
+  }
+  const shares = all.find((f) => f.path === 'lib/shares.ts');
+  assert.ok(shares, 'lib/shares.ts');
+  assert.doesNotMatch(shares.text, /\bnaira\(|import[^;]*naira|₦/, 'lib/shares.ts formats no money');
+  // Shares and bar lengths are worked out there and nowhere else.
+  const elsewhere = lines.filter((l) => l.path !== 'lib/shares.ts' && /\b(sum|total|max)\w*\s*\)\s*\*\s*100\b|\*\s*100\s*\/|\/\s*\w+\.total\.\w+/.test(l.line));
+  assert.equal(elsewhere.length, 0, where(elsewhere));
 });
 
 const REPORT_PAGES = ['app/(portal)/page.tsx', 'app/(portal)/transactions/page.tsx', 'app/(portal)/transactions/[id]/page.tsx', 'app/(portal)/incomplete/page.tsx', 'app/(portal)/finance/page.tsx', 'app/(portal)/audit/page.tsx'];

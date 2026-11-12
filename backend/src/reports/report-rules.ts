@@ -114,6 +114,79 @@ function daysBetween(from: string, to: string): number {
   return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000) + 1;
 }
 
+/** Every Lagos day from [r.from] to [r.to], in order: calendar work on the dates alone, no clock. */
+export function daysOf(r: { from: string; to: string }): string[] {
+  const days: string[] = [];
+  for (let at = Date.parse(`${r.from}T00:00:00Z`), end = Date.parse(`${r.to}T00:00:00Z`); at <= end; at += 86_400_000) {
+    days.push(new Date(at).toISOString().slice(0, 10));
+  }
+  return days;
+}
+
+// ---------------------------------------------------------------- UI-1 Finance analytics
+
+export type BucketKind = 'day' | 'week' | 'month';
+
+/** The trend's bucket, chosen from the range: by day up to 31 days, by week up to 120, by month beyond. */
+export function bucketKind(r: { from: string; to: string }): BucketKind {
+  const days = daysBetween(r.from, r.to);
+  return days <= 31 ? 'day' : days <= 120 ? 'week' : 'month';
+}
+
+const dayAfter = (day: string) => new Date(Date.parse(`${day}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * The buckets that cover [r] exactly, in order. A week runs Monday to Sunday,
+ * a month from its 1st; the first and last are clipped to the range.
+ */
+export function bucketsOf(r: { from: string; to: string }, kind: BucketKind): Array<{ start: string; end: string }> {
+  const out: Array<{ start: string; end: string }> = [];
+  let start = r.from;
+  for (const day of daysOf(r)) {
+    const next = dayAfter(day);
+    const closes =
+      day === r.to ||
+      (kind === 'day') ||
+      (kind === 'week' && new Date(`${next}T00:00:00Z`).getUTCDay() === 1) ||
+      (kind === 'month' && next.endsWith('-01'));
+    if (closes) {
+      out.push({ start, end: day });
+      start = next;
+    }
+  }
+  return out;
+}
+
+type MoneyRow = { count: number; kobo: number };
+type SplitRow = { cash: MoneyRow; card: MoneyRow; total: MoneyRow };
+
+/** Days (each with its split) summed into [buckets], in whole kobo. Days outside every bucket are not counted. */
+export function sumIntoBuckets(days: Array<{ day: string } & SplitRow>, buckets: Array<{ start: string; end: string }>) {
+  const add = (a: MoneyRow, b: MoneyRow) => ({ count: a.count + b.count, kobo: a.kobo + b.kobo });
+  return buckets.map((b) => {
+    const zero = { count: 0, kobo: 0 };
+    let split: SplitRow = { cash: zero, card: zero, total: zero };
+    for (const d of days) {
+      if (d.day < b.start || d.day > b.end) continue;
+      split = { cash: add(split.cash, d.cash), card: add(split.card, d.card), total: add(split.total, d.total) };
+    }
+    return { start: b.start, end: b.end, ...split };
+  });
+}
+
+/** The range of the same number of days that ends the day before [r] starts. */
+export function previousRange(r: { from: string; to: string }): { from: string; to: string } {
+  const n = daysBetween(r.from, r.to);
+  const shift = (day: string, k: number) => new Date(Date.parse(`${day}T00:00:00Z`) + k * 86_400_000).toISOString().slice(0, 10);
+  return { from: shift(r.from, -n), to: shift(r.from, -1) };
+}
+
+/** The average payment in whole kobo, rounded half up with integers only; null with no payment. */
+export function averageKobo(m: MoneyRow): number | null {
+  if (m.count === 0) return null;
+  return Number((2n * BigInt(m.kobo) + BigInt(m.count)) / (2n * BigInt(m.count)));
+}
+
 /**
  * A report's Lagos-day range. JSON: defaults to today, at most JSON_MAX_DAYS.
  * CSV: both dates required, at most CSV_MAX_DAYS. [today] is the database's

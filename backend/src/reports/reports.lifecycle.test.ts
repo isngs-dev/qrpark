@@ -225,6 +225,147 @@ test('finance and dashboard: a payment counts on the day it was PAID, not the da
   assert.ok(tx.body.rows.some((r: { ticketNumber: string }) => r.ticketNumber === old.ticketNumber));
 });
 
+test('UI-1: byDay lists every day of the range, quiet days as zero, and adds up to the total', async () => {
+  const w = await world();
+  const tk = () => ticket({ operatorId: w.entryOp.id, gateId: w.entryGate.id, categoryId: w.cat.id });
+  await pay(await tk(), { method: 'CASH', boothId: w.booth.id, operatorId: w.boothOp.id });
+  await pay(await tk(), { method: 'CARD', boothId: w.booth.id, operatorId: w.boothOp.id });
+  const res = await admin(`/admin/reports/finance?from=${yesterday}&to=${today}`);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.deepEqual(res.body.byDay.map((d: { day: string }) => d.day), [yesterday, today]);
+  const zero = { count: 0, kobo: 0 };
+  const sum = (k: 'cash' | 'card' | 'total') =>
+    res.body.byDay.reduce((a: { count: number; kobo: number }, d: Record<string, { count: number; kobo: number }>) => ({ count: a.count + d[k].count, kobo: a.kobo + d[k].kobo }), zero);
+  for (const k of ['cash', 'card', 'total'] as const) assert.deepEqual(sum(k), res.body.total[k], `byDay ${k} adds up to total.${k}`);
+  assert.ok(res.body.total.total.kobo > 0);
+});
+
+test('UI-1: a range with no payment lists each day at zero (a quiet day never vanishes)', async () => {
+  // Fixed past days no test writes to.
+  const res = await admin('/admin/reports/finance?from=2020-02-27&to=2020-03-01');
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  const zero = { count: 0, kobo: 0 };
+  assert.deepEqual(res.body.byDay, ['2020-02-27', '2020-02-28', '2020-02-29', '2020-03-01'].map((day) => ({ day, cash: zero, card: zero, total: zero })));
+  assert.deepEqual(res.body.total, { cash: zero, card: zero, total: zero });
+});
+
+// ================================================================ UI-1: Finance analytics
+
+/** A Lagos day long ago that no other test writes to, different on every run (rows are never removed). */
+function quietDay(): string {
+  const start = Date.UTC(1995, 0, 10);
+  const days = Math.floor((Date.UTC(2015, 11, 1) - start) / 86_400_000);
+  return new Date(start + Math.floor(Math.random() * days) * 86_400_000).toISOString().slice(0, 10);
+}
+const plusDays = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+
+/** A ticket issued on [day] (Lagos) and a payment recorded the same day at [paidHhmm]. */
+async function paidAt(w: Awaited<ReturnType<typeof world>>, cat: { id: string }, day: string, paidHhmm: string, method: 'CASH' | 'CARD', status: 'SUCCESS' | 'FAILED' = 'SUCCESS') {
+  const tk = await ticket({ operatorId: w.entryOp.id, gateId: w.entryGate.id, categoryId: cat.id, issuedAt: `${day}T07:00:00+01:00` });
+  const at = `${day}T${paidHhmm}:00+01:00`;
+  const rows = await t.prisma.$queryRawUnsafe<Array<{ id: string }>>(
+    `INSERT INTO payment (id, site_id, ticket_id, method, reference, idempotency_key, operator_id, gate_id, device_ref,
+       amount_kobo, status, paid_at, paystack_paid_at, paystack_event, updated_at)
+     VALUES (gen_random_uuid(), $1::uuid, $2::uuid, $3::payment_method, $4, $5, $6::uuid, $7::uuid, 'rep-booth', $8::int,
+       $9::payment_status, CASE WHEN $9 = 'SUCCESS' THEN $10::timestamptz END,
+       CASE WHEN $3 = 'CARD' AND $9 = 'SUCCESS' THEN $10::timestamptz END,
+       CASE WHEN $3 = 'CARD' AND $9 = 'SUCCESS' THEN jsonb_build_object('reference', $4::text) END, now())
+     RETURNING id::text`,
+    t.siteId, tk.id, method, `QRP_${randomBytes(12).toString('hex')}`, randomUUID(), w.boothOp.id, w.booth.id, tk.feeKobo, status, at,
+  );
+  if (status === 'SUCCESS') {
+    await t.prisma.$executeRawUnsafe(
+      `UPDATE ticket SET payment_status = 'PAID', paid_payment_id = $2::uuid, paid_at = $3::timestamptz WHERE id = $1::uuid`,
+      tk.id, rows[0].id, at,
+    );
+  }
+}
+
+type M = { count: number; kobo: number };
+const sumOf = (rows: Array<Record<'cash' | 'card' | 'total', M>>, k: 'cash' | 'card' | 'total') =>
+  rows.reduce((a, x) => ({ count: a.count + x[k].count, kobo: a.kobo + x[k].kobo }), { count: 0, kobo: 0 });
+
+test('UI-1 analytics: day buckets, hour of day, vehicle type, the previous period and the KPIs, all from the database', async () => {
+  const w = await world();
+  const car = w.cat; // 50,000
+  const lorry = await category('Lorry', 120_000);
+  const d = quietDay();
+  await paidAt(w, car, d, '09:30', 'CASH');
+  await paidAt(w, lorry, d, '09:45', 'CARD');
+  await paidAt(w, car, plusDays(d, 2), '15:00', 'CARD', 'FAILED'); // an attempt: never revenue
+  await paidAt(w, car, plusDays(d, 2), '15:10', 'CASH');
+  await paidAt(w, car, plusDays(d, -1), '11:00', 'CASH'); // the previous period
+
+  const res = await admin(`/admin/reports/finance?from=${d}&to=${plusDays(d, 2)}`);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  const b = res.body;
+  const zero = { count: 0, kobo: 0 };
+  assert.deepEqual(b.total, { cash: { count: 2, kobo: 100_000 }, card: { count: 1, kobo: 120_000 }, total: { count: 3, kobo: 220_000 } });
+
+  // The trend: the backend chose day buckets and summed them.
+  assert.equal(b.trend.bucket, 'day');
+  assert.deepEqual(b.trend.buckets, [
+    { start: d, end: d, cash: { count: 1, kobo: 50_000 }, card: { count: 1, kobo: 120_000 }, total: { count: 2, kobo: 170_000 } },
+    { start: plusDays(d, 1), end: plusDays(d, 1), cash: zero, card: zero, total: zero },
+    { start: plusDays(d, 2), end: plusDays(d, 2), cash: { count: 1, kobo: 50_000 }, card: zero, total: { count: 1, kobo: 50_000 } },
+  ]);
+
+  // Hour of day (Lagos): all 24 hours, quiet ones at zero, adding up to the total.
+  assert.deepEqual(b.byHour.map((h: { hour: number }) => h.hour), [...Array(24).keys()]);
+  assert.deepEqual(b.byHour[9].total, { count: 2, kobo: 170_000 });
+  assert.deepEqual(b.byHour[15].total, { count: 1, kobo: 50_000 });
+  assert.deepEqual(b.byHour[10].total, zero);
+  for (const k of ['cash', 'card', 'total'] as const) assert.deepEqual(sumOf(b.byHour, k), b.total[k], `byHour ${k}`);
+
+  // Vehicle type, from the ticket's snapshot, largest first.
+  assert.deepEqual(b.byCategory.map((c: { category: { name: string }; total: M }) => [c.category.name, c.total]), [
+    ['Lorry', { count: 1, kobo: 120_000 }],
+    ['Car', { count: 2, kobo: 100_000 }],
+  ]);
+  assert.equal(b.byCategory[0].category.code, lorry.code);
+  for (const k of ['cash', 'card', 'total'] as const) assert.deepEqual(sumOf(b.byCategory, k), b.total[k], `byCategory ${k}`);
+
+  // The period of equal length just before.
+  assert.deepEqual(b.previous, {
+    from: plusDays(d, -3), to: plusDays(d, -1),
+    total: { cash: { count: 1, kobo: 50_000 }, card: zero, total: { count: 1, kobo: 50_000 } },
+  });
+
+  // KPIs: average 220,000 / 3 = 73,333.33 -> 73,333 kobo; best day by revenue; busiest hour by payments.
+  assert.deepEqual(b.kpis, { averageKobo: 73_333, bestDay: { day: d, total: { count: 2, kobo: 170_000 } }, busiestHour: { hour: 9, count: 2 } });
+});
+
+test('UI-1 analytics: a long range is summed by week (Monday starts) and the weeks add up to the total', async () => {
+  const w = await world();
+  const d = quietDay();
+  await paidAt(w, w.cat, d, '10:00', 'CASH');
+  await paidAt(w, w.cat, plusDays(d, 30), '12:00', 'CARD');
+  await paidAt(w, w.cat, plusDays(d, 59), '17:00', 'CASH');
+  const res = await admin(`/admin/reports/finance?from=${d}&to=${plusDays(d, 59)}`);
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  const { trend, total } = res.body;
+  assert.equal(trend.bucket, 'week');
+  assert.equal(trend.buckets[0].start, d);
+  assert.equal(trend.buckets.at(-1).end, plusDays(d, 59));
+  for (const x of trend.buckets.slice(1)) assert.equal(new Date(`${x.start}T00:00:00Z`).getUTCDay(), 1, `${x.start} is a Monday`);
+  for (const k of ['cash', 'card', 'total'] as const) assert.deepEqual(sumOf(trend.buckets, k), total[k], `weeks ${k}`);
+  assert.deepEqual(total.total, { count: 3, kobo: 150_000 });
+});
+
+test('UI-1 analytics: a range with no payment has zero buckets and hours, no vehicle types and no KPIs', async () => {
+  const res = await admin('/admin/reports/finance?from=2020-02-27&to=2020-03-01');
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  const zero = { count: 0, kobo: 0 };
+  const split = { cash: zero, card: zero, total: zero };
+  assert.equal(res.body.trend.bucket, 'day');
+  assert.deepEqual(res.body.trend.buckets.map((x: { total: M }) => x.total), [zero, zero, zero, zero]);
+  assert.equal(res.body.byHour.length, 24);
+  assert.ok(res.body.byHour.every((h: { total: M }) => h.total.count === 0 && h.total.kobo === 0));
+  assert.deepEqual(res.body.byCategory, []);
+  assert.deepEqual(res.body.previous, { from: '2020-02-23', to: '2020-02-26', total: split });
+  assert.deepEqual(res.body.kpis, { averageKobo: null, bestDay: null, busiestHour: null });
+});
+
 // ================================================================ dashboard
 
 test('dashboard: today matches the database (tickets by issue day, revenue by paid day)', async () => {

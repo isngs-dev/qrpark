@@ -60,13 +60,14 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
+            android:baselineAligned="false"
             android:orientation="horizontal">
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/cameraButton"
                 style="@style/Widget.QrPark.Button.Outlined"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="match_parent"
                 android:layout_marginEnd="4dp"
                 android:layout_weight="1"
                 android:text="@string/scan_with_camera" />
@@ -75,7 +76,7 @@
                 android:id="@+id/findButton"
                 style="@style/Widget.QrPark.Button.Outlined"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="match_parent"
                 android:layout_marginStart="4dp"
                 android:layout_weight="1"
                 android:text="@string/find_by_number" />
@@ -132,13 +133,14 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
+                    android:baselineAligned="false"
                     android:orientation="horizontal"
                     android:visibility="gone">
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/cashButton"
                         android:layout_width="0dp"
-                        android:layout_height="wrap_content"
+                        android:layout_height="match_parent"
                         android:layout_marginEnd="4dp"
                         android:layout_weight="1"
                         android:minHeight="72dp"
@@ -147,7 +149,7 @@
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/cardButton"
                         android:layout_width="0dp"
-                        android:layout_height="wrap_content"
+                        android:layout_height="match_parent"
                         android:layout_marginStart="4dp"
                         android:layout_weight="1"
                         android:minHeight="72dp"
@@ -196,28 +198,26 @@
                         android:visibility="gone" />
                 </LinearLayout>
 
+                <!-- UI-1: stacked, not side by side - these labels are too long to share a row. -->
                 <LinearLayout
                     android:id="@+id/againRow"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:orientation="horizontal"
+                    android:orientation="vertical"
                     android:visibility="gone">
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/tryCardAgainButton"
-                        android:layout_width="0dp"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginEnd="4dp"
-                        android:layout_weight="1"
                         android:text="@string/try_card_again" />
 
                     <com.google.android.material.button.MaterialButton
                         android:id="@+id/takeCashButton"
-                        android:layout_width="0dp"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginStart="4dp"
-                        android:layout_weight="1"
+                        android:layout_marginTop="8dp"
                         android:text="@string/take_cash" />
                 </LinearLayout>
 

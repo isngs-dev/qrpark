@@ -847,6 +847,41 @@ is `{ count, kobo }`; each split is `{ cash, card, total }`.
                    "booth": { ... }, "operator": { ... } } ] }
 ```
 
+`byDay` lists every Lagos day from `from` to `to`, oldest first, a day with no
+payment at `{ "count": 0, "kobo": 0 }` (UI-1); its days add up to `total`.
+The CSV is unchanged: it lists payments, not days.
+
+Analytics (UI-1), JSON only, all summed by the backend in whole kobo on Lagos
+days and hours:
+
+```json
+{ "trend": { "bucket": "day", "buckets": [ { "start": "2026-11-01", "end": "2026-11-01", "cash": { ... }, "card": { ... }, "total": { ... } } ] },
+  "byHour": [ { "hour": 0, "cash": { ... }, "card": { ... }, "total": { ... } } ],
+  "byCategory": [ { "category": { "code": "CAR", "name": "Car" }, "cash": { ... }, "card": { ... }, "total": { ... } } ],
+  "previous": { "from": "2026-10-20", "to": "2026-10-31", "total": { "cash": { ... }, "card": { ... }, "total": { ... } } },
+  "kpis": { "averageKobo": 73333, "bestDay": { "day": "2026-11-07", "total": { "count": 8, "kobo": 340000 } },
+            "busiestHour": { "hour": 10, "count": 21 } } }
+```
+
+- `trend.bucket` is chosen from the range: `day` up to 31 days, `week` up to
+  120, `month` beyond. Buckets cover the range exactly, oldest first; a week
+  runs Monday to Sunday and a month from its 1st, the first and last clipped
+  to the range. Every bucket is listed, a quiet one at zero; they add up to
+  `total`.
+- `byHour`: all 24 Lagos hours (0-23) of `paid_at`, zeros included; they add
+  up to `total`.
+- `byCategory`: by the ticket's vehicle-type snapshot (`category_code`; the
+  name is the latest issued under that code), largest revenue first. Only
+  types with a payment in the range.
+- `previous`: the same number of days ending the day before `from`, and its
+  totals.
+- `kpis.averageKobo`: `total.total.kobo / total.total.count`, rounded half up
+  to whole kobo; `null` with no payment. `bestDay`: the day with the most
+  revenue (earliest on a tie); `busiestHour`: the hour with the most payments
+  (earliest on a tie); each `null` with no payment.
+
+The Dashboard (`/admin/reports/dashboard`) does not compute these.
+
 `byBooth` and `byOperator` are what the Finance page compares with the
 physical cash. `duplicates`: DUPLICATE card payments whose Paystack paid time
 (else their last update) is in the range. `cancelled`: card payments cancelled

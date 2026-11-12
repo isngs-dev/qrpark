@@ -1,8 +1,8 @@
 import Link from 'next/link';
 import { naira } from '@/lib/config-types';
-import { getDashboard } from '@/lib/reports';
+import { getDashboard, todayFor } from '@/lib/reports';
 import type { Split } from '@/lib/reports-types';
-import { Refused, ReportFrame, ShowButton } from './report-frame';
+import { DayChips, Refused, ReportFrame, ShowButton } from './report-frame';
 import { Tile, Tiles } from './ui';
 
 export const metadata = { title: 'Dashboard · QR Parking Admin' };
@@ -17,6 +17,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const result = await getDashboard(input);
   if (!result.ok) return <Refused message={result.message} />;
   const d = result.data;
+  const today = await todayFor(input, { from: d.day });
   const breakdown = (s: Split) => [
     { label: `Cash (${s.cash.count})`, value: naira(s.cash.kobo) },
     { label: `Card (${s.card.count})`, value: naira(s.card.kobo) },
@@ -28,13 +29,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       range={{ day: d.day }}
       explain="Tickets are counted on the Lagos day they were issued; revenue on the Lagos day each payment was recorded as paid."
     >
-      <form method="get" className="mb-5 flex flex-wrap items-end gap-3">
+      <DayChips day={d.day} today={today} />
+      <form id="range" method="get" className="mb-5 flex flex-wrap items-end gap-3">
         <label className="text-xs text-ink-soft">
           Day
           <input type="date" name="day" defaultValue={d.day} className="mt-1 block rounded border border-line px-2 py-1 text-sm" />
         </label>
         <ShowButton />
-        <Link href="/" className="pb-1.5 text-sm text-accent underline">Today</Link>
       </form>
 
       <Tiles>

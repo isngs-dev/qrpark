@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copied from eparking 359c0c1 android/pos/app/src/main/res/mipmap-anydpi-v26
+     (with the foreground PNGs in mipmap-*dpi): the GSD chevron mark on white,
+     no E-Parking text. The label stays "QR Parking" (app_name), so it is never
+     taken for eparking's app on the same device. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/white" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+    <monochrome android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

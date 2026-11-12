@@ -1,10 +1,10 @@
 import Link from 'next/link';
 import { lagosTime, naira } from '@/lib/config-types';
-import { getAudit, pageFrom } from '@/lib/reports';
+import { getAudit, pageFrom, todayFor } from '@/lib/reports';
 import { AUDIT_ACTION_LABELS, csvHref, pageLinks, type AuditRow } from '@/lib/reports-types';
 import { getUsers } from '@/lib/users';
 import { Pager } from '../pager';
-import { RangeFields, Refused, ReportFrame, ShowButton } from '../report-frame';
+import { RangeChips, RangeFields, Refused, ReportFrame, ShowButton } from '../report-frame';
 import { ActivityList, ActivityMeta, ActivityRow, Empty } from '../ui';
 
 export const metadata = { title: 'Audit log · QR Parking Admin' };
@@ -18,11 +18,13 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
   const [result, users] = await Promise.all([getAudit(input, pageFrom(input)), getUsers()]);
   if (!result.ok) return <Refused message={result.message} />;
   const r = result.data;
+  const today = await todayFor(input, r);
   const value = (k: string) => (Array.isArray(input[k]) ? input[k]?.[0] : input[k]) ?? '';
 
   return (
     <ReportFrame title="Audit log" range={r} csv={csvHref('audit', r, input)} explain="Every change to prices, settings, locations and accounts, every cash confirmation, reprint and card cancellation, with who did it.">
-      <form method="get" className="mb-5 flex flex-wrap items-end gap-3">
+      <RangeChips path="/audit" input={input} range={r} today={today} />
+      <form id="range" method="get" className="mb-5 flex flex-wrap items-end gap-3">
         <RangeFields range={r} />
         <label className="text-xs text-ink-soft">
           What

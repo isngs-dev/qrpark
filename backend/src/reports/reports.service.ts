@@ -8,6 +8,12 @@ import {
   auditDetail,
   EXCEL_MAX_ROWS,
   csvCell,
+  averageKobo,
+  bucketKind,
+  bucketsOf,
+  daysOf,
+  previousRange,
+  sumIntoBuckets,
   lagosStamp,
   nairaPlain,
   parseRange,
@@ -378,7 +384,8 @@ export class ReportsService {
     return { cash, card, total: { count: cash.count + card.count, kobo: cash.kobo + card.kobo } };
   }
 
-  async finance(r: Range) {
+  /** [analytics]: the Finance page's trend, hours, vehicle types, previous period and KPIs (UI-1); the Dashboard needs none. */
+  async finance(r: Range, analytics = true) {
     const siteId = await this.site.getId();
     const success = `p.site_id = $1::uuid AND p.status = 'SUCCESS' AND ${inRange('p.paid_at', 2, 3)}`;
     const byDayRows = await this.prisma.$queryRawUnsafe<Array<any>>(
@@ -401,7 +408,9 @@ export class ReportsService {
       for (const x of rows) map.set(key(x), [...(map.get(key(x)) ?? []), x]);
       return map;
     };
-    const byDay = [...group(byDayRows, (x) => x.day as string)].map(([day, rows]) => ({ day, ...ReportsService.money(rows) }));
+    // UI-1: every day of the range, a day with no payment at zero, so a quiet day shows rather than vanishing.
+    const paidDays = group(byDayRows, (x) => x.day as string);
+    const byDay = daysOf(r).map((day) => ({ day, ...ReportsService.money(paidDays.get(day) ?? []) }));
     const byBooth = [...group(byBoothRows, (x) => x.g_id as string)].map(([, rows]) => ({
       booth: gate(rows[0].g_id, rows[0].g_code, rows[0].g_name)!,
       ...ReportsService.money(rows),
@@ -412,7 +421,61 @@ export class ReportsService {
     }));
     const total = ReportsService.money(byDayRows);
     const { duplicates, cancelled } = await this.notRevenue(siteId, r);
-    return { ...r, total, byDay, byBooth, byOperator, duplicates, cancelled };
+    const base = { ...r, total, byDay, byBooth, byOperator, duplicates, cancelled };
+    return analytics ? { ...base, ...(await this.analytics(siteId, r, total, byDay)) } : base;
+  }
+
+  /**
+   * UI-1: what the Finance charts draw, all summed here in whole kobo on Lagos
+   * days and hours. The trend's bucket is chosen from the range (bucketKind).
+   */
+  private async analytics(siteId: string, r: Range, total: { cash: Money; card: Money; total: Money }, byDay: Array<{ day: string; cash: Money; card: Money; total: Money }>) {
+    const success = `p.site_id = $1::uuid AND p.status = 'SUCCESS' AND ${inRange('p.paid_at', 2, 3)}`;
+    const kind = bucketKind(r);
+    const trend = { bucket: kind, buckets: sumIntoBuckets(byDay, bucketsOf(r, kind)) };
+
+    const hourRows = await this.prisma.$queryRawUnsafe<Array<any>>(
+      `SELECT extract(hour FROM p.paid_at AT TIME ZONE 'Africa/Lagos')::int AS hour, p.method::text AS method, COUNT(*) AS n, SUM(p.amount_kobo) AS kobo
+         FROM payment p WHERE ${success} GROUP BY 1, 2`,
+      siteId, r.from, r.to,
+    );
+    const byHour = [...Array(24).keys()].map((hour) => ({ hour, ...ReportsService.money(hourRows.filter((x) => x.hour === hour)) }));
+
+    // Vehicle type from the ticket's snapshot; a type renamed since is shown by its latest name.
+    const catRows = await this.prisma.$queryRawUnsafe<Array<any>>(
+      `SELECT t.category_code AS code, (array_agg(t.category_name ORDER BY t.issued_at DESC))[1] AS name,
+              p.method::text AS method, COUNT(*) AS n, SUM(p.amount_kobo) AS kobo
+         FROM payment p JOIN ticket t ON t.id = p.ticket_id WHERE ${success} GROUP BY 1, 3`,
+      siteId, r.from, r.to,
+    );
+    const codes = [...new Set(catRows.map((x) => x.code as string))];
+    const byCategory = codes
+      .map((code) => {
+        const rows = catRows.filter((x) => x.code === code);
+        return { category: { code, name: rows[0].name as string }, ...ReportsService.money(rows) };
+      })
+      .sort((a, b) => b.total.kobo - a.total.kobo || a.category.name.localeCompare(b.category.name));
+
+    const prev = previousRange(r);
+    const prevRows = await this.prisma.$queryRawUnsafe<Array<any>>(
+      `SELECT p.method::text AS method, COUNT(*) AS n, SUM(p.amount_kobo) AS kobo FROM payment p WHERE ${success} GROUP BY 1`,
+      siteId, prev.from, prev.to,
+    );
+
+    // Best day by revenue, busiest hour by payments; the earliest wins a tie.
+    const best = byDay.reduce<(typeof byDay)[number] | null>((a, d) => (d.total.kobo > (a?.total.kobo ?? 0) ? d : a), null);
+    const busy = byHour.reduce<(typeof byHour)[number] | null>((a, h) => (h.total.count > (a?.total.count ?? 0) ? h : a), null);
+    return {
+      trend,
+      byHour,
+      byCategory,
+      previous: { ...prev, total: ReportsService.money(prevRows) },
+      kpis: {
+        averageKobo: averageKobo(total.total),
+        bestDay: best ? { day: best.day, total: best.total } : null,
+        busiestHour: busy ? { hour: busy.hour, count: busy.total.count } : null,
+      },
+    };
   }
 
   /** DUPLICATE (to refund) and cancelled card payments in [r]: listed, never counted as revenue. */
@@ -505,7 +568,7 @@ export class ReportsService {
          FROM ticket WHERE site_id = $1::uuid AND ${inRange('issued_at', 2, 3)}`,
       siteId, day, day,
     );
-    const fin = await this.finance(r);
+    const fin = await this.finance(r, false);
     return {
       day,
       tickets: {

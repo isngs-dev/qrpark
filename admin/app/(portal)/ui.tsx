@@ -100,7 +100,7 @@ export function Block({
   return (
     <section className="mb-6">
       {title ? (
-        <div className="mb-2.5 flex items-center justify-between gap-3">
+        <div className="mb-2.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
           <h2 className="font-display text-[15px] font-bold text-ink">{title}</h2>
           {aside ? <span className="text-xs text-ink-soft">{aside}</span> : null}
         </div>

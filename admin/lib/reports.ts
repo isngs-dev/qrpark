@@ -33,3 +33,18 @@ export function pageFrom(input: Input): number {
   const raw = Array.isArray(input.page) ? input.page[0] : input.page;
   return raw && /^\d{1,5}$/.test(raw) && Number(raw) >= 1 ? Number(raw) : 1;
 }
+
+/**
+ * UI-1: the backend's Lagos today, for the range chips. When the page asked
+ * for no day the backend already answered with today; otherwise one small
+ * report is asked with no day, and its range is today. Never the portal's clock.
+ */
+export async function todayFor(input: Input, shown: { from: string }): Promise<string | null> {
+  const asked = ['from', 'to', 'day'].some((k) => {
+    const v = input[k];
+    return Boolean((Array.isArray(v) ? v[0] : v)?.trim());
+  });
+  if (!asked) return shown.from;
+  const r = await api<{ from: string }>(REPORTS.incomplete.path);
+  return r.ok ? r.data.from : null;
+}

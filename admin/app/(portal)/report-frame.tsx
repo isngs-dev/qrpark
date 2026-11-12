@@ -1,3 +1,5 @@
+import Link from 'next/link';
+import { CSV_MAX_DAYS, activeChip, chipHref, chipRanges, csvFits, dayChips } from '@/lib/range-chips';
 import { rangeLabel, type Range } from '@/lib/reports-types';
 
 /**
@@ -26,7 +28,14 @@ export function ReportFrame({
         <h1 className="font-display text-[21px] font-bold text-ink">{title}</h1>
         <p className="text-[12.5px] text-ink-soft">
           {shown} · all times are Lagos time
-          {csv ? (
+          {csv && !('day' in range) && !csvFits(range) ? (
+            <>
+              {' · '}
+              {/* UI-1: over the limit the backend would refuse the file, so there is no link to follow. */}
+              <span className="font-medium text-ink">No CSV for more than {CSV_MAX_DAYS} days: choose a shorter range</span>{' '}
+              <span className="text-ink-soft">(at most 92 days and 1,048,575 rows, the most Excel opens)</span>
+            </>
+          ) : csv ? (
             <>
               {' · '}
               {/* A plain link: it is a file download (the CSV route), not a page. */}
@@ -75,4 +84,53 @@ export function ShowButton() {
 /** A backend refusal, shown as written. */
 export function Refused({ message }: { message: string }) {
   return <p className="rounded-md bg-bad-wash px-3 py-2 text-sm whitespace-pre-line text-bad">{message}</p>;
+}
+
+type Input = Record<string, string | string[] | undefined>;
+
+const chip = (on: boolean) =>
+  `rounded-full border px-3 py-1 text-[12.5px] font-medium whitespace-nowrap ${
+    on ? 'border-ink bg-ink text-paper' : 'border-line bg-surface text-ink hover:border-ink-soft'
+  }`;
+
+/**
+ * UI-1 (P2): quick ranges, worked out from the backend's Lagos [today] (null
+ * when it could not be read: then only the date fields). Plain links, so a
+ * chip is a GET like the form; the page's other filters are kept. "Custom"
+ * goes to the date fields.
+ */
+export function RangeChips({ path, input, range, today }: { path: string; input: Input; range: Range; today: string | null }) {
+  if (!today) return null;
+  const on = activeChip(range, today);
+  return (
+    <nav aria-label="Quick ranges" className="mb-3 flex flex-wrap gap-2">
+      {chipRanges(today).map((c) => (
+        <Link key={c.key} href={chipHref(path, input, c)} className={chip(on === c.key)} aria-current={on === c.key ? 'page' : undefined}>
+          {c.label}
+        </Link>
+      ))}
+      <a href="#range" className={chip(on === 'custom')} aria-current={on === 'custom' ? 'page' : undefined}>
+        Custom
+      </a>
+    </nav>
+  );
+}
+
+/** The Dashboard's one-day chips: Today, Yesterday, or a custom day. */
+export function DayChips({ day, today }: { day: string; today: string | null }) {
+  if (!today) return null;
+  const chips = dayChips(today);
+  const on = chips.find((c) => c.day === day)?.key ?? 'custom';
+  return (
+    <nav aria-label="Quick days" className="mb-3 flex flex-wrap gap-2">
+      {chips.map((c) => (
+        <Link key={c.key} href={`/?day=${c.day}`} className={chip(on === c.key)} aria-current={on === c.key ? 'page' : undefined}>
+          {c.label}
+        </Link>
+      ))}
+      <a href="#range" className={chip(on === 'custom')} aria-current={on === 'custom' ? 'page' : undefined}>
+        Custom day
+      </a>
+    </nav>
+  );
 }

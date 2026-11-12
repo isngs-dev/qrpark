@@ -1,5 +1,6 @@
 package ng.gsds.qrpark
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.View
 import androidx.appcompat.app.AppCompatActivity
@@ -12,7 +13,9 @@ import ng.gsds.qrpark.databinding.ActivityCheckBinding
  * never submits. Opened from the ticket screen ("Check this ticket"), it
  * checks the ticket on screen, whose token is in memory and never shown.
  *
- * The camera arrives in 4b.
+ * Scan with camera (UI-1, A2) is the booth's and the exit's: ScanActivity
+ * hands the scan back in memory (ScanHand) and deliverScan only fills the
+ * field. Check stays the operator's tap.
  */
 class CheckActivity : AppCompatActivity() {
 
@@ -29,6 +32,8 @@ class CheckActivity : AppCompatActivity() {
         if (!session.isSignedIn) return openSignIn(ended = false)
 
         binding.scanField.enterNeverSubmits()
+        binding.cameraButton.visibility = if (scannerKind(this) == ScannerKind.CAMERA) View.VISIBLE else View.GONE
+        binding.cameraButton.setOnClickListener { startActivity(Intent(this, ScanActivity::class.java)) }
         binding.checkButton.setOnClickListener {
             val scanned = binding.scanField.text?.toString()?.trim().orEmpty()
             if (scanned.isEmpty()) {
@@ -42,11 +47,33 @@ class CheckActivity : AppCompatActivity() {
         if (intent.getBooleanExtra(EXTRA_SHOWN, false) && onScreen != null) {
             // The staff tapped "Check this ticket": that tap is the action.
             binding.scanLayout.visibility = View.GONE
+            binding.cameraButton.visibility = View.GONE
             binding.checkButton.text = getString(R.string.check_this_ticket) + " · " + onScreen.ticketNumber
             binding.checkButton.setOnClickListener { check(onScreen.token) }
             check(onScreen.token)
         } else {
             binding.scanField.requestFocus()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!::binding.isInitialized || binding.scanLayout.visibility != View.VISIBLE) return
+        ScanHand.take()?.let { deliverScan(scanTarget, it) }
+    }
+
+    private val scanTarget = object : ScanTarget {
+        override var text: String
+            get() = binding.scanField.text?.toString().orEmpty()
+            set(value) {
+                binding.scanField.setText(value)
+                binding.scanField.setSelection(value.length)
+                binding.scanField.requestFocus()
+            }
+
+        /** A scan never calls it: the operator taps Check. */
+        override fun submit() {
+            binding.checkButton.performClick()
         }
     }
 

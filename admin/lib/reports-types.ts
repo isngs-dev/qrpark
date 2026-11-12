@@ -107,6 +107,12 @@ export interface FinanceReport extends Range {
   byOperator: Array<{ operator: Person } & Split>;
   duplicates: Array<{ reference: string; ticketNumber: string; amountKobo: number; paystackPaidAt: string | null; booth: Place | null; operator: Person | null; note: string }>;
   cancelled: Array<{ reference: string; ticketNumber: string; amountKobo: number; cancelledAt: string; forced: boolean; booth: Place | null; operator: Person | null }>;
+  // UI-1 analytics: every figure summed by the backend (docs/api.md, finance).
+  trend: { bucket: 'day' | 'week' | 'month'; buckets: Array<{ start: string; end: string } & Split> };
+  byHour: Array<{ hour: number } & Split>;
+  byCategory: Array<{ category: { code: string; name: string } } & Split>;
+  previous: Range & { total: Split };
+  kpis: { averageKobo: number | null; bestDay: { day: string; total: Money } | null; busiestHour: { hour: number; count: number } | null };
 }
 
 export interface Dashboard {

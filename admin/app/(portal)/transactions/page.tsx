@@ -1,11 +1,11 @@
 import Link from 'next/link';
 import { getCategories, getGates } from '@/lib/config';
 import { lagosTime, naira } from '@/lib/config-types';
-import { getTransactions, pageFrom } from '@/lib/reports';
+import { getTransactions, pageFrom, todayFor } from '@/lib/reports';
 import { METHOD_LABELS, STATE_LABELS, csvHref, pageLinks } from '@/lib/reports-types';
 import { getUsers } from '@/lib/users';
 import { Pager } from '../pager';
-import { RangeFields, Refused, ReportFrame, ShowButton } from '../report-frame';
+import { RangeChips, RangeFields, Refused, ReportFrame, ShowButton } from '../report-frame';
 import { Empty, TableWrap, Td, Th, Tr } from '../ui';
 
 export const metadata = { title: 'Transactions · QR Parking Admin' };
@@ -22,6 +22,7 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
   const [result, categories, gates, users] = await Promise.all([getTransactions(input, page), getCategories(), getGates(), getUsers()]);
   if (!result.ok) return <Refused message={result.message} />;
   const r = result.data;
+  const today = await todayFor(input, r);
   const value = (k: string) => (Array.isArray(input[k]) ? input[k]?.[0] : input[k]) ?? '';
   const select = (name: string, label: string, options: Array<{ value: string; label: string }>) => (
     <label className="text-xs text-ink-soft">
@@ -38,7 +39,8 @@ export default async function TransactionsPage({ searchParams }: { searchParams:
 
   return (
     <ReportFrame title="Transactions" range={r} csv={csvHref('transactions', r, input)} explain="One row per ticket, on the Lagos day it was issued. Open a ticket to see every payment attempt, scan and reprint.">
-      <form method="get" className="mb-5 flex flex-wrap items-end gap-3">
+      <RangeChips path="/transactions" input={input} range={r} today={today} />
+      <form id="range" method="get" className="mb-5 flex flex-wrap items-end gap-3">
         <RangeFields range={r} />
         <label className="text-xs text-ink-soft">
           Ticket number ends with

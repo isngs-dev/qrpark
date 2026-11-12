@@ -32,11 +32,21 @@
             android:maxLines="1" />
     </com.google.android.material.textfield.TextInputLayout>
 
+    <!-- UI-1 (A2): the camera, as at the booth and the exit. A scan only fills the field. -->
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/cameraButton"
+        style="@style/Widget.QrPark.Button.Outlined"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:text="@string/scan_with_camera"
+        android:visibility="gone" />
+
     <com.google.android.material.button.MaterialButton
         android:id="@+id/checkButton"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
+        android:layout_marginTop="8dp"
         android:text="@string/check" />
 
     <TextView

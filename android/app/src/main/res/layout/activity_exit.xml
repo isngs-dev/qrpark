@@ -61,13 +61,14 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
+            android:baselineAligned="false"
             android:orientation="horizontal">
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/cameraButton"
                 style="@style/Widget.QrPark.Button.Outlined"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="match_parent"
                 android:layout_marginEnd="4dp"
                 android:layout_weight="1"
                 android:text="@string/scan_with_camera" />
@@ -76,7 +77,7 @@
                 android:id="@+id/checkButton"
                 style="@style/Widget.QrPark.Button.Outlined"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="match_parent"
                 android:layout_marginStart="4dp"
                 android:layout_weight="1"
                 android:text="@string/check" />
