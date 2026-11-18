@@ -19,7 +19,6 @@ import ng.gsds.qrpark.databinding.ActivityTicketBinding
 class TicketActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityTicketBinding
-    private var printing = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -38,16 +37,16 @@ class TicketActivity : AppCompatActivity() {
         binding.lines.typeface = Typeface.MONOSPACE
         binding.lines.text = paper.lines.dropLast(2).joinToString("\n") + "\n" + getString(R.string.ticket_footer)
 
-        val printer = choosePrinter(this)
+        // MINO-1: the printer is chosen at the tap (PrinterChosenAtPrint); the
+        // tap itself is TicketPrintAction: one print at a time, this paper only.
+        val print = TicketPrintAction(PrinterChosenAtPrint(this), paper)
         binding.printButton.setOnClickListener {
-            if (printing) return@setOnClickListener
-            printing = true
-            binding.printButton.isEnabled = false
-            printer.print(paper) { outcome ->
-                printing = false
-                binding.printButton.isEnabled = true
-                binding.message.text = printOutcomeText(outcome)
-            }
+            if (!print.press { outcome ->
+                    binding.printButton.isEnabled = true
+                    binding.message.text = printOutcomeText(outcome)
+                }
+            ) return@setOnClickListener
+            if (print.busy) binding.printButton.isEnabled = false
         }
         binding.checkThisButton.setOnClickListener {
             startActivity(Intent(this, CheckActivity::class.java).putExtra(CheckActivity.EXTRA_SHOWN, true))

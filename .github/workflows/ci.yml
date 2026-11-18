@@ -129,8 +129,15 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      # MINO-1: the app has two flavours. CI has no Nexgo SDK (it is never in the
+      # repo), so only the standard flavour exists here: its tests, and its APK
+      # built through the APK guard (no vendor class, no forbidden API, the
+      # app's own permissions only). Was: :app:testDebugUnitTest.
       - name: App JVM tests
-        run: gradle -p android :app:testDebugUnitTest --console=plain
+        run: gradle -p android :app:testStandardDebugUnitTest --console=plain
+
+      - name: Standard APK, built without the Nexgo SDK, through the APK guard
+        run: gradle -p android :app:debugApk --console=plain
 
       - name: Release-rule tests (build-logic)
         run: gradle -p android/build-logic test --console=plain

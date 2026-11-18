@@ -130,5 +130,39 @@ class SourceRulesTest {
         assertEquals(emptyList<String>(), bad)
     }
 
+    // ------------------------------------------------ MINO-1: the flavour sources too
+
+    private fun flavourSources() = appSources().filter { !it.path.replace('\\', '/').contains("src/main/") }
+
+    @Test
+    fun `no flavour source file logs anything either (the Nexgo print and scan paths included)`() {
+        val files = flavourSources()
+        val offenders = files.flatMap { f ->
+            stripComments(f.readText()).lines().mapIndexedNotNull { i, line -> if (logging.containsMatchIn(line)) "${f.name}:${i + 1}" else null }
+        }
+        assertEquals(emptyList<String>(), offenders)
+        assertTrue("the scan found the standard build's sources", files.any { it.name == "FlavourDevices.kt" })
+    }
+
+    @Test
+    fun `no flavour puts a token in an Intent or storage, or a read or an exception's text anywhere but the hand-over`() {
+        val intentToken = Regex("""(putExtra|putString|bundleOf|putSerializable|putParcelable)\s*\([^)]*(?i:token|ticket\b|IssuedTicket|data\b|text\b)""")
+        val disk = Regex("""getSharedPreferences|openFileOutput|FileOutputStream|\.writeText\(|\.writeBytes\(""")
+        val exceptionText = Regex("""\.(message|localizedMessage|stackTrace)\b|printStackTrace""")
+        val bad = flavourSources().filter { f ->
+            val src = stripComments(f.readText())
+            intentToken.containsMatchIn(src) || disk.containsMatchIn(src) || exceptionText.containsMatchIn(src)
+        }.map { it.name }
+        assertEquals(emptyList<String>(), bad)
+    }
+
+    @Test
+    fun `no flavour names a device model or reads the model or serial (the Nexgo build finds its device by capability)`() {
+        // The vendor's own package names (com.nexgo...) are allowed in src/nexgo; models are not.
+        val models = Regex("""(?i)\b(M960|MF960|morefun|mino|N86|N5|AF910|P1000|sunmi|pax\b|ingenico|verifone)\b|Build\.(MODEL|SERIAL|getSerial|DEVICE|PRODUCT)|getModel\(|\.model\b""")
+        val bad = flavourSources().filter { models.containsMatchIn(stripComments(it.readText())) }.map { it.name }
+        assertEquals(emptyList<String>(), bad)
+    }
+
     private fun stripXmlComments(xml: String) = xml.replace(Regex("""<!--[\s\S]*?-->"""), "")
 }

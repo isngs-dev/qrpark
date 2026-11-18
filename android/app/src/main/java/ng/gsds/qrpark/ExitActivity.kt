@@ -45,7 +45,7 @@ class ExitActivity : AppCompatActivity(), ScanScreen, ScanKeyScreen {
 
         binding.validateButton.setOnClickListener { validate() }
         binding.checkButton.setOnClickListener { check() }
-        binding.cameraButton.setOnClickListener { startActivity(Intent(this, ScanActivity::class.java)) }
+        binding.cameraButton.setOnClickListener { startActivity(ticketScanIntent(this)) }
         binding.nextButton.setOnClickListener { next() }
         binding.signOutButton.setOnClickListener {
             BackendClient.logout(session) {}

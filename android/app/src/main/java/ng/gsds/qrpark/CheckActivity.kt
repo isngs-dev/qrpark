@@ -33,7 +33,7 @@ class CheckActivity : AppCompatActivity() {
 
         binding.scanField.enterNeverSubmits()
         binding.cameraButton.visibility = if (scannerKind(this) == ScannerKind.CAMERA) View.VISIBLE else View.GONE
-        binding.cameraButton.setOnClickListener { startActivity(Intent(this, ScanActivity::class.java)) }
+        binding.cameraButton.setOnClickListener { startActivity(ticketScanIntent(this)) }
         binding.checkButton.setOnClickListener {
             val scanned = binding.scanField.text?.toString()?.trim().orEmpty()
             if (scanned.isEmpty()) {

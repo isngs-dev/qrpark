@@ -18,6 +18,11 @@ gradlePlugin {
             id = "qrpark.release"
             implementationClass = "ng.gsds.qrpark.release.QrparkReleasePlugin"
         }
+        // MINO-1: scans every built APK (ng.gsds.qrpark.guard).
+        create("qrparkApkGuard") {
+            id = "qrpark.apkguard"
+            implementationClass = "ng.gsds.qrpark.guard.ApkGuardPlugin"
+        }
     }
 }
 

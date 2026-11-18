@@ -145,16 +145,49 @@ class ReleaseRulesTest {
 
     @Test
     fun `each APK task builds its own kind`() {
-        assertEquals("assembleDebug", assembleTask("debug"))
-        assertEquals("assembleRelease", assembleTask("release"))
-        assertEquals("outputs/apk/release/app-release.apk", builtApkPath("release"))
-        assertEquals("outputs/apk/debug/app-debug.apk", builtApkPath("debug"))
+        // MINO-1: with flavours, the standard build is the "standard" variant.
+        // Was: assembleDebug / assembleRelease, outputs/apk/<kind>/app-<kind>.apk.
+        assertEquals("assembleStandardDebug", assembleTask("debug"))
+        assertEquals("assembleStandardRelease", assembleTask("release"))
+        assertEquals("outputs/apk/standard/release/app-standard-release.apk", builtApkPath("release"))
+        assertEquals("outputs/apk/standard/debug/app-standard-debug.apk", builtApkPath("debug"))
+    }
+
+    @Test
+    fun `the nexgo APK tasks build the nexgo variants, under their own names`() {
+        assertEquals("assembleNexgoDebug", assembleTask("debug", "nexgo"))
+        assertEquals("assembleNexgoRelease", assembleTask("release", "nexgo"))
+        assertEquals("outputs/apk/nexgo/debug/app-nexgo-debug.apk", builtApkPath("debug", "nexgo"))
+        assertEquals("qrpark-0.4.0-b9-abc1234-nexgo-debug.apk", apkFileName(versionNameFor("0.4.0", 9, "abc1234", false), "debug", "nexgo"))
+        // The standard names are unchanged.
+        assertEquals("qrpark-0.4.0-b9-abc1234-debug.apk", apkFileName(versionNameFor("0.4.0", 9, "abc1234", false), "debug"))
+    }
+
+    @Test
+    fun `a standard APK never deletes a nexgo APK, and a nexgo APK never deletes a standard one`() {
+        val folder = listOf(
+            "qrpark-0.4.0-b6-0000000-debug.apk", "qrpark-0.4.0-b6-0000000-debug.apk.sha256",
+            "qrpark-0.4.0-b6-0000000-nexgo-debug.apk", "qrpark-0.4.0-b6-0000000-nexgo-debug.apk.sha256",
+            "qrpark-0.4.0-b6-0000000-nexgo-release.apk",
+        )
+        assertEquals(
+            listOf("qrpark-0.4.0-b6-0000000-debug.apk", "qrpark-0.4.0-b6-0000000-debug.apk.sha256"),
+            previousApks(folder, "debug", keep = "qrpark-0.4.0-b7-abc1234-debug.apk"),
+        )
+        assertEquals(
+            listOf("qrpark-0.4.0-b6-0000000-nexgo-debug.apk", "qrpark-0.4.0-b6-0000000-nexgo-debug.apk.sha256"),
+            previousApks(folder, "debug", keep = "qrpark-0.4.0-b7-abc1234-nexgo-debug.apk", flavor = "nexgo"),
+        )
     }
 
     @Test
     fun `the release build meets the release check, the debug build does not`() {
         assertTrue(isReleasePreBuild("preReleaseBuild"))
         assertTrue(!isReleasePreBuild("preDebugBuild"))
+        // MINO-1: the flavoured release builds meet it too; their debug builds do not.
+        assertTrue(isReleasePreBuild("preStandardReleaseBuild"))
+        assertTrue(isReleasePreBuild("preNexgoReleaseBuild"))
+        assertTrue(!isReleasePreBuild("preNexgoDebugBuild"))
     }
 
     @Test

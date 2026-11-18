@@ -203,10 +203,30 @@ it.
   - Payment: cash (confirmed by the booth, recorded by the backend); card by
     Paystack checkout (now) or Paystack Terminal (later). Card is confirmed only
     by the backend.
-  - Printer: Android printing (now, PDF preview on the emulator). Terminal
-    printing later. No other printer or ticket dispenser is integrated.
-  - Scanner: camera (CameraX + zxing) and keyboard-wedge scanners. A scan only
+  - Printer: Android printing (now, PDF preview on the emulator); the Nexgo
+    printer on Nexgo devices (see below). Terminal printing later. No other
+    printer or ticket dispenser is integrated.
+  - Scanner: camera (CameraX + zxing), keyboard-wedge scanners, and the Nexgo
+    scanner on Nexgo devices (CameraX stays the fallback there). A scan only
     fills the field; it never acts by itself. Staff tap to act.
+- **Nexgo devices (decided 2026-11-18, job MINO-1).** The Nexgo Mino 1
+  (Android 13) is an **additional** supported device. It does **not** replace
+  the M960 plan: the Paystack Terminal (M960) stays the final device and the
+  target for in-person card payments. On a Nexgo device the app uses Nexgo's
+  printer and scanner as adapters behind the existing printer and scan seams,
+  chosen at run time by capability (the Nexgo SDK answers), never by model.
+  Limits:
+  - Only the printer and scanner parts of the Nexgo SDK are used. No card,
+    PIN, EMV, key or system calls (install, reboot, clock, buttons, settings),
+    no network or log-reading calls, and **no card-reading code**. Card
+    payment stays the Paystack checkout.
+  - The Nexgo SDK is **never committed**: it is referenced by a path in
+    `local.properties` (git-ignored). A build without it must succeed; CI
+    builds without it.
+  - The standard (non-Nexgo) APK contains **no vendor classes**. An APK guard
+    fails the build if our code references any forbidden SDK class, or if the
+    standard APK contains any vendor class.
+  - An APK built with the SDK embeds it: kept private, never published.
 - **Ticket branding:** the GSD logo on the left and the AIC logo on the right
   (copied from eparking); the brand line is the site's organisation name (else
   its display name) with the contact line beneath, both edited in the Admin

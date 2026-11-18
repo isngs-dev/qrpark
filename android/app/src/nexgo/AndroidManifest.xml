@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MINO-1, nexgo build only (merged into src/main's manifest). No permission
+  is added: the Nexgo printer and scanner need none beyond the app's own
+  CAMERA (the N86-1 probe printed and scanned on the Mino 1 with only CAMERA).
+  The APK guard fails the build if any permission is added.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Not a permission: lets the app see whether Nexgo's system service is
+         installed (Android 11+ package visibility). -->
+    <queries>
+        <package android:name="com.xgd.possystemservice" />
+    </queries>
+
+    <application>
+        <!-- No screen of its own; the Nexgo scan screen shows on top. -->
+        <activity
+            android:name=".nexgo.NexgoScanActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+    </application>
+</manifest>

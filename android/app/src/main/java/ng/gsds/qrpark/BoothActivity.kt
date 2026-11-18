@@ -68,7 +68,7 @@ class BoothActivity : AppCompatActivity(), ScanScreen, ScanKeyScreen {
         binding.cameraButton.visibility = if (scannerKind(this) == ScannerKind.CAMERA) View.VISIBLE else View.GONE
 
         binding.checkButton.setOnClickListener { check() }
-        binding.cameraButton.setOnClickListener { startActivity(Intent(this, ScanActivity::class.java)) }
+        binding.cameraButton.setOnClickListener { startActivity(ticketScanIntent(this)) }
         binding.findButton.setOnClickListener { askSuffix() }
         binding.takePaymentButton.setOnClickListener { showMethods() }
         binding.cashButton.setOnClickListener { showConfirmCash() }

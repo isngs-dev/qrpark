@@ -79,24 +79,42 @@ fun signingProblems(props: Map<String, String?>, fileExists: (String) -> Boolean
 }
 
 /** e.g. qrpark-0.4.0-b6-bfb3724-debug.apk. [kind] is "debug" or "release". */
-fun apkFileName(versionName: String, kind: String): String = "qrpark-$versionName-$kind.apk"
+fun apkFileName(versionName: String, kind: String, flavor: String = STANDARD): String =
+    "qrpark-$versionName-${apkTag(kind, flavor)}.apk"
+
+/** MINO-1: the app's build flavours. `standard` is every phone; the others add a vendor's adapters. */
+const val STANDARD = "standard"
+val VENDOR_FLAVORS = listOf("nexgo")
+
+/**
+ * The variant's part of an APK name: the standard build keeps the names it
+ * always had ("debug", "release"); a vendor build is named for its flavour
+ * ("nexgo-debug").
+ */
+fun apkTag(kind: String, flavor: String = STANDARD): String = if (flavor == STANDARD) kind else "$flavor-$kind"
 
 /**
  * The earlier APKs of the same kind (and their .sha256 files) in the output
  * folder: deleted in the same step that writes a new one. Never another
  * kind's, never a file that is not ours.
  */
-fun previousApks(fileNames: List<String>, kind: String, keep: String): List<String> =
+fun previousApks(fileNames: List<String>, kind: String, keep: String, flavor: String = STANDARD): List<String> =
     fileNames.filter { name ->
         val apk = name.removeSuffix(".sha256")
-        apk.startsWith("qrpark-") && apk.endsWith("-$kind.apk") && apk != keep
+        apk.startsWith("qrpark-") && apk.endsWith("-${apkTag(kind, flavor)}.apk") && apk != keep &&
+            // A standard "-debug.apk" never takes a vendor build's "-nexgo-debug.apk" with it.
+            (flavor != STANDARD || VENDOR_FLAVORS.none { apk.endsWith("-${apkTag(kind, it)}.apk") })
     }
 
-/** The task that builds an APK of [kind] ("debug" or "release"). */
-fun assembleTask(kind: String): String = "assemble" + kind.replaceFirstChar { it.uppercase() }
+/** The task that builds an APK of [kind] ("debug" or "release") in [flavor]. */
+fun assembleTask(kind: String, flavor: String = STANDARD): String = "assemble" + variantName(kind, flavor)
+
+/** "StandardDebug", "NexgoRelease": the variant as AGP names its tasks. */
+fun variantName(kind: String, flavor: String = STANDARD): String =
+    flavor.replaceFirstChar { it.uppercase() } + kind.replaceFirstChar { it.uppercase() }
 
 /** Where AGP writes that APK, under the build directory. */
-fun builtApkPath(kind: String): String = "outputs/apk/$kind/app-$kind.apk"
+fun builtApkPath(kind: String, flavor: String = STANDARD): String = "outputs/apk/$flavor/$kind/app-$flavor-$kind.apk"
 
 /** preReleaseBuild: meets checkReleaseConfig. No debug task does. */
 fun isReleasePreBuild(taskName: String): Boolean =

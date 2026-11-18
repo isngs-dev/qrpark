@@ -23,9 +23,17 @@ import java.io.File
  *   releaseApk          the same for the signed release (Sprint 4c): it meets
  *                       checkReleaseConfig first, so it cannot be built with
  *                       an http address or without signing
+ *   nexgoDebugApk,      MINO-1: the same for the nexgo flavour, named
+ *   nexgoReleaseApk     qrpark-<version>-nexgo-<kind>.apk; they exist only when
+ *                       the Nexgo SDK is set (nexgo.aar). debugApk and
+ *                       releaseApk build the standard flavour, as before.
+ *
+ * Every APK task waits for the APK guard of its variant (qrpark.apkguard), so
+ * no published APK skipped it.
  *
  * Copied from eparking 359c0c1 android/build-logic/.../EparkingReleasePlugin.kt
- * and adapted: names, no flavours, debugApk and releaseApk in place of vendorApk.
+ * and adapted: names, debugApk and releaseApk in place of vendorApk; MINO-1
+ * added the flavours back (standard, nexgo).
  */
 class QrparkReleasePlugin : Plugin<Project> {
     override fun apply(project: Project) {
@@ -47,8 +55,12 @@ class QrparkReleasePlugin : Plugin<Project> {
         // Release tasks only: a debug build never meets this check.
         project.tasks.matching { isReleasePreBuild(it.name) }.configureEach { it.dependsOn(check) }
 
-        registerApkTask(project, ext, "debugApk", "debug")
-        registerApkTask(project, ext, "releaseApk", "release")
+        registerApkTask(project, ext, "debugApk", "debug", STANDARD)
+        registerApkTask(project, ext, "releaseApk", "release", STANDARD)
+        for (flavor in VENDOR_FLAVORS) {
+            registerApkTask(project, ext, "${flavor}DebugApk", "debug", flavor)
+            registerApkTask(project, ext, "${flavor}ReleaseApk", "release", flavor)
+        }
     }
 
     /**
@@ -57,17 +69,22 @@ class QrparkReleasePlugin : Plugin<Project> {
      * previous APK of the same kind and its .sha256 in the same step. The
      * release one runs checkReleaseConfig first (through preReleaseBuild).
      */
-    private fun registerApkTask(project: Project, ext: QrparkReleaseExtension, taskName: String, kind: String) {
+    private fun registerApkTask(project: Project, ext: QrparkReleaseExtension, taskName: String, kind: String, flavor: String) {
         project.tasks.register(taskName) { task ->
             task.group = "qrpark"
-            task.description = "Builds the $kind APK, named by version, build number and commit, with a SHA-256 file."
-            task.dependsOn(assembleTask(kind))
+            task.description = "Builds the $flavor $kind APK, named by version, build number and commit, with a SHA-256 file."
+            // Matched lazily: without the Nexgo SDK the nexgo variants do not exist.
+            task.dependsOn(project.tasks.matching { it.name == assembleTask(kind, flavor) })
+            task.dependsOn(project.tasks.matching { it.name == "guard${variantName(kind, flavor)}Apk" })
             task.doLast {
-                val built = project.layout.buildDirectory.file(builtApkPath(kind)).get().asFile
-                if (!built.isFile) throw GradleException("No $kind APK at $built")
-                val name = apkFileName(ext.versionName, kind)
+                if (project.tasks.findByName(assembleTask(kind, flavor)) == null) {
+                    throw GradleException("The $flavor build does not exist here: set nexgo.aar in local.properties (android/BUILDING.md).")
+                }
+                val built = project.layout.buildDirectory.file(builtApkPath(kind, flavor)).get().asFile
+                if (!built.isFile) throw GradleException("No $flavor $kind APK at $built")
+                val name = apkFileName(ext.versionName, kind, flavor)
                 val outDir = project.layout.buildDirectory.dir("apk").get().asFile.apply { mkdirs() }
-                for (old in previousApks(outDir.list()?.toList().orEmpty(), kind, keep = name)) {
+                for (old in previousApks(outDir.list()?.toList().orEmpty(), kind, keep = name, flavor = flavor)) {
                     File(outDir, old).delete()
                     println("Deleted:    ${File(outDir, old)}")
                 }

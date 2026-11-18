@@ -18,6 +18,13 @@ festive-season launch. Anything not in the MVP list waits for Phase 2.
   required"; check.
 - Works on Android 10+ (tested on the emulator); built so the Paystack Terminal
   (M960) can be added as the final device.
+- **Nexgo Mino 1** (Android 13), an additional supported device (job MINO-1,
+  2026-11-18), not a replacement for the M960: on a Nexgo device the ticket
+  prints on the Nexgo printer and tickets can be scanned with the Nexgo
+  scanner (CameraX stays the fallback), chosen at run time by capability.
+  Only the SDK's printer and scanner parts; no card reading (card payment
+  stays the Paystack checkout); the SDK is never committed; the standard APK
+  holds no vendor classes (CLAUDE.md, Devices).
 
 **Backend**
 - Auth and roles (ADMIN, ENTRY_OPERATOR, PAYMENT_OPERATOR, EXIT_OPERATOR);
@@ -54,6 +61,9 @@ festive-season launch. Anything not in the MVP list waits for Phase 2.
 - ANPR, plate numbers, vehicle registration; any customer data (name, phone)
 - Parking duration, time tracking, hourly or time-based fees
 - Ticket dispenser integration (operators hand tickets over); other printers
+  (beyond Android printing and the Nexgo printer on Nexgo devices)
+- Card reading on Nexgo devices (card payment stays the Paystack checkout;
+  in-person card payment is the M960's, Phase 2)
 - Barrier integration
 - Occupancy / slot management
 - Customer mobile app, customer accounts, SMS/email

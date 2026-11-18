@@ -31,8 +31,9 @@ Entry: ticket created, UNPAID  ->  Booth: paid (cash or card), PAID  ->  Exit: V
 
 1. Operator signs in. The app opens in Entry mode and shows the operator's
    entry gate.
-2. Operator taps **New ticket** and picks the **vehicle category** from the list
-   (the list and its prices come from the backend). Nothing else is asked.
+2. Operator picks the **vehicle type** from the list (the list and its prices
+   come from the backend; the fee shows as soon as a type is chosen) and taps
+   **New ticket**. Nothing else is asked.
 3. The app sends the category code and an idempotency key for this attempt.
    The backend creates the ticket at once:
    - an opaque random **token** (the QR) and a short **ticket number**,
@@ -146,6 +147,12 @@ returns the payment status, validation status, fee and times, with the result:
 `EXPIRED`, `NOT_FOUND` or `INVALID_QR`. Nothing changes. Every check is a
 recorded scan.
 
+On every job, Entry included, the Check screen offers **Scan with camera** when
+the device has a camera (the same camera screen as the booth and the exit).
+The scan only fills the field; **Check** stays the operator's tap. When Entry
+checks the ticket it has just printed ("Check this ticket"), there is no scan
+field and so no camera button: the ticket on screen is checked.
+
 **Lookup by number** (entry and payment operators). Customers quote the last
 characters of the ticket number, which are not unique. The operator types 3 or
 more trailing characters; the backend returns **today's** matching tickets
@@ -176,22 +183,58 @@ the original issuer. Every miss is the same 404.
   be reused; its history stays (tickets, payments, scans and audit rows still
   show the operator's name in reports). Nobody can delete or deactivate their
   own account or the last active admin. Audited (`USER_DELETED`).
-- **Transactions**: list and search (ticket number, payment reference), filter
-  by date, location, operator, category, payment method and status. The detail
-  view shows the ticket, its payments and every scan.
+- **Transactions**: list and search by the end of the ticket number (3–8
+  characters), filter by date range, state (unpaid, paid, validated, expired),
+  vehicle type, entry gate, booth, payment method and operator. The detail view
+  shows the ticket, its payments (with our payment reference) and every scan.
+  There is no search by payment reference.
 - **Incomplete sessions**: tickets issued on a day that were never validated at
   exit, unpaid or paid, per day, entry gate, booth and operator, so the admin
   can spot vehicles let out without being scanned. For **today** the list also
   holds vehicles still inside, so today's rows are shown as "in progress", not
   as incomplete; only a day that has ended has incomplete sessions.
-- **Finance / Revenue**: cash and card revenue separately and in total, per day,
-  per booth and per operator, to compare recorded cash with the physical cash.
-- **Dashboard**: today and a chosen date range — tickets issued (per entry gate
-  and category), payments and amount collected (cash and card separately and
-  in total), unpaid tickets, tickets validated at exit, incomplete sessions,
-  per location and per operator.
-- **Export**: CSV of the filtered transactions and reports. Excel and PDF are
-  to be confirmed with management (Phase 2).
+- **Finance / Revenue**: SUCCESS payments by the Lagos day they were recorded
+  PAID; every figure is summed by the backend in whole kobo.
+  - Key figures: revenue and number of payments, each with its change against
+    the **previous period** (the same number of days just before the range);
+    the average payment; the best day; the busiest hour.
+  - **Cash** and **Card** as two tiles: amount, count and share of the total.
+  - A revenue **trend**, cash and card stacked, in buckets the backend chooses
+    from the range: days up to 31 days, weeks (Monday to Sunday) up to 120,
+    months beyond; a quiet bucket shows as zero.
+  - Revenue by **hour of day** (all 24 Lagos hours) and by **vehicle type**.
+  - **By booth** and **by operator**, cash and card, to compare recorded cash
+    with the physical cash.
+  - Duplicate card payments and card payments cancelled at the booth, listed
+    apart with their reference, never counted as revenue.
+  The charts are drawn in the page itself (inline SVG, no outside script).
+  Their figures are also text: each column of the trend and hour charts is
+  labelled with its amount and number of payments, the cash/card bar with both
+  shares, and the vehicle-type chart is a table.
+- **Dashboard**: a **one-day** view (today unless another day is chosen):
+  tickets issued that day (paid, unpaid, validated, in progress, never
+  validated), revenue (cash, card, total) and what is not revenue (duplicate
+  and cancelled card payments). It has no date range and no per-location or
+  per-operator breakdown: those are in Transactions, Incomplete sessions and
+  Finance.
+- **Audit log**: every audited action, newest first, filtered by date range,
+  action and the person who did it. Each row shows the action, who, when, and
+  an allow-listed set of details per action (never the raw record, a token, a
+  checkout link or a payment reference).
+- **Date ranges**: Transactions, Incomplete sessions, Finance and Audit offer
+  quick chips — Today, Yesterday, This week (from Monday), Last 7 days, This
+  month, Last month — and a Custom range; the Dashboard offers Today, Yesterday
+  and a custom day. "Today" is the backend's Lagos date, never the browser's
+  clock. A page covers at most 366 days.
+- **Export (CSV)**: Transactions, Incomplete sessions, Finance and Audit, each
+  for its own filters. A CSV needs both dates and covers at most **92 days**;
+  over that, the page shows a note instead of the link. The rows are counted
+  first: more than **1,048,575** (the most Excel can open) is refused with the
+  count, never cut short. The file is **streamed** (read and sent 5,000 rows at
+  a time), UTF-8 with a byte-order mark so Excel opens it directly; a cell that
+  Excel would run as a formula is neutralised. If something fails part-way the
+  download is broken off, never delivered short. Excel and PDF exports are to
+  be confirmed with management (Phase 2).
 - No refunds, reversals or status corrections anywhere in the portal.
 - No device registry: devices are controlled through accounts only.
 
@@ -202,6 +245,16 @@ the original issuer. Every miss is the same 404.
   sweep every 2 minutes for anything still PENDING. Past the window, a payment
   Paystack says is not paid becomes ABANDONED. A check moves a payment only on
   Paystack's answer.
+- **Late checks**: a card payment that ended ABANDONED or FAILED (for example
+  cancelled at the booth) is asked about again for **30 minutes** after it
+  ended, by the delayed checks still due and by every sweep. Only Paystack's
+  SUCCESS changes anything: the ticket becomes PAID (a late success, logged as
+  a warning), or, if the ticket was paid meanwhile (in cash), the payment is
+  recorded as a DUPLICATE to refund in the Paystack dashboard. Any other answer,
+  or none, changes nothing. A late success for a ticket that has expired is
+  recorded; the ticket stays EXPIRED.
+- Finished jobs are removed from Redis at once; at most 50 failed jobs are
+  kept.
 - No job expires tickets: EXPIRED is derived from `valid_until` on the database
   clock.
 
@@ -216,3 +269,14 @@ the original issuer. Every miss is the same 404.
 - Every config change, every cash confirmation, every reprint and every account
   change is audited (who, what, when).
 - No offline approval and no offline payment.
+- **Sign-in lockout** (app and portal, the same rule): failed sign-ins are
+  counted for 15 minutes from the first failure — 5 for one username from one
+  address, 20 for one username from anywhere, 30 from one address for any
+  username. At a limit every attempt is refused, even with the right password,
+  with "Too many sign-in attempts. Try again in N minutes." The answer is the
+  same for a real and an unknown username. A successful sign-in clears its
+  username-and-address count; an admin setting the account's password, or the
+  unthrottle command on the server, clears that username's counts. The start of
+  a block is audited (`LOGIN_THROTTLED`). The portal passes on the browser's
+  own address, so a block through the portal is per browser, not for everyone
+  using the portal.

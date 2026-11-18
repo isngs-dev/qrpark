@@ -38,3 +38,5 @@ Thumbs.db
 
 # Raw evidence for the review room. Kept locally, never committed.
 .evidence/
+# Vendor SDKs (Nexgo .aar): never in the repo, referenced by path only
+*.aar

@@ -14,11 +14,12 @@ run Gradle from Android Studio or with a local Gradle 8.9.
 ## Development builds
 
 ```bash
-gradle -p android :app:testDebugUnitTest :app:debugApk
+gradle -p android :app:testStandardDebugUnitTest :app:debugApk
 gradle -p android/build-logic test
 ```
 
-`debugApk` builds the debug APK and writes, under `android/app/build/apk/`:
+`debugApk` builds the debug APK of the **standard** build (every phone; see
+"Nexgo devices" below) and writes, under `android/app/build/apk/`:
 
 - `qrpark-<versionName>-debug.apk`
 - `qrpark-<versionName>-debug.apk.sha256` (check it with `sha256sum -c`)
@@ -31,6 +32,56 @@ the Android emulator, and may use cleartext to that address only:
 `src/debug/res/xml/network_security_config.xml`. The main (release) config,
 `src/main/res/xml/network_security_config.xml`, permits no cleartext at all.
 `SourceRulesTest` checks both.
+
+## Nexgo devices (MINO-1)
+
+The app has two build flavours of the one app (same package, `ng.gsds.qrpark`):
+
+| Flavour | For | APK task | APK name |
+|---|---|---|---|
+| `standard` | every phone, the emulator, CI | `debugApk`, `releaseApk` | `qrpark-<version>-debug.apk` (unchanged) |
+| `nexgo` | Nexgo devices (the Mino 1); on any other phone it behaves as `standard` | `nexgoDebugApk`, `nexgoReleaseApk` | `qrpark-<version>-nexgo-debug.apk` |
+
+The `nexgo` build prints the ticket on the Nexgo printer and scans with the
+Nexgo scanner (CameraX stays the fallback), once the device's Nexgo service
+has answered. It finds out at run time, never from the model.
+
+**The Nexgo SDK is never in the repo.**
+- Put the path of its `.aar` (kept outside the repo) in your own
+  `android/local.properties`, which is git-ignored:
+  ```
+  nexgo.aar=C\:\\Dev\\nexgo-sdk-review\\Nexgo_Android_SDK_v3.08.016\\01-Smart POS SDK Library\\nexgo-smartpos-sdk-v3.08.016_20261110.aar
+  ```
+- **Without it**, only the `standard` flavour exists and every build
+  succeeds. This is how CI builds. `nexgoDebugApk` then stops with "set
+  nexgo.aar".
+- **With it:**
+  ```bash
+  gradle -p android :app:testNexgoDebugUnitTest :app:nexgoDebugApk
+  ```
+- The build refuses a `nexgo.aar` inside the repo.
+- **A nexgo APK embeds the SDK. Keep it private:** never publish it, attach
+  it to an issue, or put it in a release.
+
+**The APK guard** (`build-logic`, `qrpark.apkguard`) runs after every
+`assemble…`, and `debugApk`, `releaseApk`, `nexgoDebugApk`, `nexgoReleaseApk`
+and `install…` wait for it.
+
+It reads the built APK's code and permissions. The build fails if:
+- the **standard** APK holds any vendor class;
+- our code refers to any Nexgo SDK member outside the allow-list (engine,
+  device info, printer, camera scanner);
+- our code refers to anything that reads cards, PINs, EMV or keys, or that
+  controls the system (install, reboot, clock, buttons, settings);
+- our code runs processes or uses reflection, or logs anything;
+- the Nexgo adapter package opens a network connection;
+- a library touches the SDK;
+- any permission other than INTERNET and CAMERA (and AndroidX's own) appears.
+
+Reports go to `app/build/apk-guard/<flavour>-<kind>.txt`.
+
+The device checks (printing, scanning, and the logcat check for the token)
+are in `docs/nexgo-n86/mino1-test-plan.md`.
 
 ## Build properties
 

@@ -27,7 +27,12 @@ class CheckCameraTest {
     @Test
     fun `it shows only when the device has a camera, and opens ScanActivity`() {
         assertTrue(check.contains("binding.cameraButton.visibility = if (scannerKind(this) == ScannerKind.CAMERA) View.VISIBLE else View.GONE"))
-        assertTrue(check.contains("binding.cameraButton.setOnClickListener { startActivity(Intent(this, ScanActivity::class.java)) }"))
+        // MINO-1. Was: ...setOnClickListener { startActivity(Intent(this, ScanActivity::class.java)) }
+        // Now it opens ticketScanIntent: the device's own scanner where one
+        // answered, else exactly ScanActivity as before (DeviceExtras.kt).
+        assertTrue(check.contains("binding.cameraButton.setOnClickListener { startActivity(ticketScanIntent(this)) }"))
+        val extras = stripComments(java.io.File("src/main/java/ng/gsds/qrpark/DeviceExtras.kt").readText())
+        assertTrue(extras.contains("ScanChoice.CAMERA -> Intent(context, ScanActivity::class.java)"))
     }
 
     @Test

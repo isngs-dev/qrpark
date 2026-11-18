@@ -32,10 +32,11 @@ import java.io.IOException
 
 /**
  * Printing the ticket, behind one interface. The printer is chosen by what
- * the device can do, never by its model: Android's own print system when the
- * device has it (the dialog, then a printer or Save as PDF - the PDF preview
- * on the emulator), otherwise none, and the screen says so. Terminal printing
- * is a later adapter.
+ * the device can do, never by its model: the device's own printer when its
+ * build flavour has one and it answered (MINO-1: a vendor printer, in the
+ * flavour's source set), else Android's own print system when the device has it (the
+ * dialog, then a printer or Save as PDF - the PDF preview on the emulator),
+ * otherwise none, and the screen says so. Terminal printing is a later adapter.
  */
 interface TicketPrinter {
     enum class Outcome { SENT, CANCELLED, FAILED, NO_PRINTER }
@@ -43,8 +44,24 @@ interface TicketPrinter {
     fun print(paper: TicketPaper, onOutcome: (Outcome) -> Unit)
 }
 
-fun choosePrinter(activity: Activity): TicketPrinter =
-    if (AndroidTicketPrinter.available(activity)) AndroidTicketPrinter(activity) else NoPrinter
+fun choosePrinter(activity: Activity): TicketPrinter {
+    FlavourDevices.prepare(activity.applicationContext)
+    val vendor = FlavourDevices.printer(activity)
+    return when (printerChoice(vendor != null, AndroidTicketPrinter.available(activity))) {
+        PrinterChoice.VENDOR -> vendor!!
+        PrinterChoice.ANDROID -> AndroidTicketPrinter(activity)
+        PrinterChoice.NONE -> NoPrinter
+    }
+}
+
+/**
+ * The printer chosen when Print is tapped, not when the screen opened: the
+ * device's own printer may answer a moment after the app starts.
+ */
+class PrinterChosenAtPrint(private val activity: Activity) : TicketPrinter {
+    override fun print(paper: TicketPaper, onOutcome: (TicketPrinter.Outcome) -> Unit) =
+        choosePrinter(activity).print(paper, onOutcome)
+}
 
 object NoPrinter : TicketPrinter {
     override fun print(paper: TicketPaper, onOutcome: (TicketPrinter.Outcome) -> Unit) = onOutcome(TicketPrinter.Outcome.NO_PRINTER)
@@ -245,19 +262,42 @@ object PaperArt {
         plan.contactLines.forEach { canvas.drawText(it, GRID / 2, y + CONTACT_SIZE, contact); y += CONTACT_LINE }
     }
 
-    fun draw(canvas: Canvas, area: RectF, paper: TicketPaper, logos: Logos) {
+    private fun monoPaint(paper: TicketPaper) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.BLACK; typeface = Typeface.MONOSPACE; textSize = 40f
+        val widest = paper.lines.maxOfOrNull { measureText(it) } ?: 0f
+        if (widest > GRID) textSize *= GRID / widest
+    }
+
+    /** The paper's height on the 1000-unit grid. */
+    private fun gridHeight(paper: TicketPaper, logos: Logos): Float =
+        headerHeight(plan(paper.header, logos)) + 30f + QR + 30f + monoPaint(paper).textSize * 1.3f * paper.lines.size
+
+    /**
+     * MINO-1: the same paper as ONE bitmap exactly [widthDots] wide, for a
+     * printer that prints images (a vendor adapter). The QR is drawn here,
+     * from the token, so the printer receives a picture and never the token
+     * as text.
+     */
+    fun render(context: Context, paper: TicketPaper, widthDots: Int): Bitmap {
+        val logos = logos(context)
+        val height = (gridHeight(paper, logos) * widthDots / GRID).toInt() + 1
+        val bitmap = Bitmap.createBitmap(widthDots, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.WHITE)
+        draw(canvas, RectF(0f, 0f, widthDots.toFloat(), height.toFloat()), paper, logos, maxWidth = widthDots.toFloat())
+        return bitmap
+    }
+
+    /** [maxWidth]: no wider than an 80 mm roll on a PDF page; a bitmap passes its own width. */
+    fun draw(canvas: Canvas, area: RectF, paper: TicketPaper, logos: Logos, maxWidth: Float = MAX_WIDTH_PT) {
         val plan = plan(paper.header, logos)
         val headerH = headerHeight(plan)
 
-        val mono = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.BLACK; typeface = Typeface.MONOSPACE; textSize = 40f
-        }
-        val widest = paper.lines.maxOfOrNull { mono.measureText(it) } ?: 0f
-        if (widest > GRID) mono.textSize *= GRID / widest
+        val mono = monoPaint(paper)
         val lineH = mono.textSize * 1.3f
-        val height = headerH + 30f + QR + 30f + lineH * paper.lines.size
+        val height = gridHeight(paper, logos)
 
-        var scale = minOf(area.width(), MAX_WIDTH_PT) / GRID
+        var scale = minOf(area.width(), maxWidth) / GRID
         if (height * scale > area.height()) scale = area.height() / height
 
         canvas.save()

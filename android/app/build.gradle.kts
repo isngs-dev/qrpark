@@ -1,7 +1,27 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("qrpark.release")
+    id("qrpark.apkguard")
+}
+
+// MINO-1: the Nexgo SDK (.aar) is NEVER in the repo. Its path comes from
+// local.properties (git-ignored) or -Pnexgo.aar=..., and must lie outside the
+// repo. Without it only the `standard` flavour exists, and that is what CI
+// builds. See android/BUILDING.md, "Nexgo devices".
+val localProps = Properties().apply {
+    rootProject.file("local.properties").takeIf { it.isFile }?.reader()?.use { load(it) }
+}
+val nexgoAar: File? = (providers.gradleProperty("nexgo.aar").orNull ?: localProps.getProperty("nexgo.aar"))
+    ?.takeIf { it.isNotBlank() }?.let { File(it) }
+if (nexgoAar != null) {
+    if (!nexgoAar.isFile) throw GradleException("nexgo.aar is set but does not point to a file.")
+    val repo = rootProject.projectDir.parentFile.canonicalPath + File.separator
+    if (nexgoAar.canonicalPath.startsWith(repo)) {
+        throw GradleException("nexgo.aar must lie outside the repository; the SDK is never kept in it.")
+    }
 }
 
 // Version, server address and the APK name come from android/build-logic,
@@ -59,6 +79,17 @@ android {
         }
     }
 
+    // MINO-1. `standard`: every phone, no vendor code at all (the APK guard
+    // checks it holds no vendor class). `nexgo`: the same app plus the Nexgo
+    // printer and scanner adapters (src/nexgo), used only when the device's
+    // Nexgo service answers; on any other phone it behaves as `standard`.
+    // Same applicationId: one app, two builds.
+    flavorDimensions += "device"
+    productFlavors {
+        create("standard") { dimension = "device" }
+        create("nexgo") { dimension = "device" }
+    }
+
     buildFeatures {
         buildConfig = true
         viewBinding = true
@@ -93,6 +124,9 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.3.4")
     implementation("androidx.camera:camera-view:1.3.4")
 
+    // MINO-1: the Nexgo SDK, by path, for the nexgo flavour only (see the top).
+    if (nexgoAar != null) add("nexgoImplementation", files(nexgoAar))
+
     // JVM unit tests for the pure rule files (no Android imports), so they
     // run in seconds with no emulator and no backend.
     testImplementation("junit:junit:4.13.2")
@@ -103,4 +137,24 @@ dependencies {
 tasks.withType<Test>().configureEach {
     inputs.dir("src/main")
     inputs.dir("src/debug")
+    inputs.dir("src/standard")
+    inputs.dir("src/nexgo")
+}
+
+// Without the SDK the nexgo variants do not exist, so a build without it
+// succeeds and builds the standard app only.
+androidComponents {
+    beforeVariants(selector().withFlavor("device" to "nexgo")) { it.enable = nexgoAar != null }
+}
+
+// The APK guard (android/build-logic, ApkGuard*.kt): after every assemble, the
+// built APK is scanned. standard: no vendor class at all. nexgo: our code may
+// touch only the SDK's printer, scanner and device-info parts; nothing that
+// reads cards, PINs, EMV or keys, controls the system, or reads logs.
+qrparkApkGuard {
+    applicationId.set("ng.gsds.qrpark")
+    ownPackage.set("ng/gsds/qrpark/")
+    aapt2.set(File(android.sdkDirectory, "build-tools/${android.buildToolsVersion}/" +
+        if (System.getProperty("os.name").startsWith("Windows")) "aapt2.exe" else "aapt2").path)
+    nexgoEnabled.set(nexgoAar != null)
 }

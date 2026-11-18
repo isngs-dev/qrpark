@@ -20,6 +20,9 @@ class LoginActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // MINO-1: start finding out, at launch, whether this device's own
+        // printer and scanner answer (nothing on the standard build).
+        FlavourDevices.prepare(applicationContext)
         binding = ActivityLoginBinding.inflate(layoutInflater)
         setContentView(binding.root)
         binding.root.padForSystemBars()
